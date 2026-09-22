@@ -336,33 +336,24 @@ html, body {
   width: 100%; height: 100%; display: block;
 }
 
-/* =================== SENSOR READOUT (Player A) =================== */
-#sensor-readout {
-  padding: 6px 12px;
+/* =================== PLAYER A TERMINAL HINT =================== */
+.a-hint {
+  padding: 7px 12px;
   border-top: 1px solid var(--crt-line);
-  background: rgba(154,240,160,0.04);
-  font-size: 0.7rem;
-}
-.sensor-row {
-  display: flex; align-items: center; gap: 8px;
-  margin: 4px 0;
-}
-.sensor-row .lbl {
-  width: 64px; letter-spacing: 0.2rem;
+  background: rgba(154,240,160,0.03);
+  font-size: 0.64rem;
+  letter-spacing: 0.22rem;
   color: var(--crt-ink-dim);
+  text-align: center;
 }
-.sensor-row .bar {
-  flex: 1; height: 6px;
-  background: rgba(154,240,160,0.08);
-  border: 1px solid var(--crt-line);
-  position: relative; overflow: hidden;
+.a-hint .ah-k {
+  display: inline-block;
+  border: 1px solid rgba(255,184,75,0.45);
+  color: var(--crt-amber);
+  padding: 1px 7px;
+  margin-right: 8px;
+  text-shadow: 0 0 4px rgba(255,184,75,0.5);
 }
-.sensor-row .bar > div {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, var(--crt-ink), var(--crt-amber), var(--crt-warn));
-  transition: width 0.18s linear;
-}
-.sensor-row .val { width: 54px; text-align: right; color: var(--crt-amber); }
 
 /* =================== PLAYER B HUD =================== */
 #player-b-panel .vp-canvas-wrap { background: #020303; }

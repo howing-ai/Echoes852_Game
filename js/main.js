@@ -229,6 +229,7 @@ function onChannelMessage(msg) {
         ghost.aggression = msg.ga;
         ghost.state  = msg.gs;
         ghost.staticLevel = msg.gsl;
+        ghost.rageTimer = msg.gr ? 5 : 0;
         if (typeof msg.isMoving === 'boolean') playerB.isMoving = msg.isMoving;
         // beacon progress
         if (Array.isArray(msg.collected)) {
@@ -252,6 +253,13 @@ function onChannelMessage(msg) {
     case 'a-target': {
       if (game.role === 'B' && Number.isInteger(msg.idx)) {
         playerA.activeBeaconIdx = msg.idx;
+      }
+      break;
+    }
+    case 'a-lure': {
+      // A pinged a beacon: the ghost (simulated in B's tab) rushes to the sound
+      if (game.role === 'B' && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
+        ghost.investigate(msg.x, msg.y);
       }
       break;
     }
@@ -326,12 +334,25 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Player A clicks on a beacon -> notify Player B (and self)
+// Player A selects/pings a beacon (click or 1-5) -> lure the ghost + notify B
+function triggerLure(idx) {
+  const b = playerA.beacons[idx];
+  if (!b || b.collected) return;
+  const bx = b.x + 0.5, by = b.y + 0.5;
+  // Loud spatial ping in A's own headphones, at the beacon's true position
+  audio.playLurePing?.(bx, by);
+  // The ghost hears it too (it is simulated in Player B's tab)
+  channel?.postMessage({ type: 'a-lure', x: bx, y: by, idx });
+}
+
 const origSetActive = playerA.setActiveBeaconIdx?.bind(playerA);
 playerA.setActiveBeaconIdx = function (idx) {
   if (origSetActive) origSetActive(idx);
   else this.activeBeaconIdx = idx;
-  if (game.role === 'A') channel?.postMessage({ type: 'a-target', idx });
+  if (game.role === 'A') {
+    channel?.postMessage({ type: 'a-target', idx });
+    if (game.phase === STATE.PLAY) triggerLure(idx);
+  }
 };
 
 window.addEventListener('resize', () => {
@@ -385,6 +406,7 @@ function update(dt) {
         x: playerB.x, y: playerB.y, yaw: playerB.yaw,
         gx: ghost.x, gy: ghost.y, ga: ghost.aggression,
         gs: ghost.state, gsl: ghost.staticLevel,
+        gr: ghost.rageTimer > 0,
         isMoving: playerB.isMoving,
         collected,
       });
@@ -467,19 +489,23 @@ function update(dt) {
 }
 
 function updateHUD_B(beaconDist) {
-  // Bars
-  proxBar.style.width   = (game.ghostProximity * 100).toFixed(1) + '%';
-  proxVal.textContent   = game.ghostProximity.toFixed(2);
-  aggrBar.style.width   = (ghost.aggression * 100).toFixed(1) + '%';
-  aggrVal.textContent   = ghost.aggression.toFixed(2);
+  // Sensor footer bars were removed from Player A's panel — guard nulls
+  if (proxBar) {
+    proxBar.style.width = (game.ghostProximity * 100).toFixed(1) + '%';
+    proxVal.textContent = game.ghostProximity.toFixed(2);
+    aggrBar.style.width = (ghost.aggression * 100).toFixed(1) + '%';
+    aggrVal.textContent = ghost.aggression.toFixed(2);
+  }
 
-  if (beaconDist < 99) {
-    const norm = Math.max(0, 1 - beaconDist / 32);
-    beaconBar.style.width = (norm * 100).toFixed(1) + '%';
-    beaconVal.textContent = beaconDist.toFixed(1);
-  } else {
-    beaconBar.style.width = '0%';
-    beaconVal.textContent = '--';
+  if (beaconBar) {
+    if (beaconDist < 99) {
+      const norm = Math.max(0, 1 - beaconDist / 32);
+      beaconBar.style.width = (norm * 100).toFixed(1) + '%';
+      beaconVal.textContent = beaconDist.toFixed(1);
+    } else {
+      beaconBar.style.width = '0%';
+      beaconVal.textContent = '--';
+    }
   }
 
   // Static overlay
@@ -538,28 +564,18 @@ function updateHUD_B(beaconDist) {
   }
 }
 
-function updateHUD_A(beaconDist) {
-  // Sensor bars
-  proxBar.style.width   = (game.ghostProximity * 100).toFixed(1) + '%';
-  proxVal.textContent   = game.ghostProximity.toFixed(2);
-  aggrBar.style.width   = (ghost.aggression * 100).toFixed(1) + '%';
-  aggrVal.textContent   = ghost.aggression.toFixed(2);
-
-  // Beacon bar (distance from Player B to the currently-selected beacon)
-  if (beaconDist < 99) {
-    const norm = Math.max(0, 1 - beaconDist / 32);
-    beaconBar.style.width = (norm * 100).toFixed(1) + '%';
-    beaconVal.textContent = beaconDist.toFixed(1);
-  } else {
-    beaconBar.style.width = '100%';
-    beaconVal.textContent = 'done';
-  }
+function updateHUD_A() {
+  // The terminal is deliberately number-free: danger is conveyed by the
+  // red tide, the heartbeat edge pulse, the static, and the audio itself.
 
   // Status text (audio-centric phrasing for the listener)
   const danger = game.tension > 0.65;
   const warn   = game.tension > 0.30;
 
-  if (danger) {
+  if (ghost.getRage?.()) {
+    statusA.textContent = 'IT IS FURIOUS';
+    statusA.className   = 'status danger';
+  } else if (danger) {
     statusA.textContent = 'HUM OVERWHELMING';
     statusA.className   = 'status danger';
   } else if (warn) {

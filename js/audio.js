@@ -270,6 +270,41 @@ export class SpatialAudio {
   }
 
   // ------------------------------------------------------------------------
+  // The auditory LURE: a loud ping at a beacon's true world position.
+  // Player A hears it panned/attenuated through Player B's ears — and the
+  // ghost (simulated in Player B's tab) is drawn to the sound.
+  // ------------------------------------------------------------------------
+  playLurePing(x, y) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+
+    const panner = this.ctx.createPanner();
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'exponential';
+    panner.refDistance = 1.0;
+    panner.maxDistance = 60;
+    panner.rolloffFactor = 0.45;   // deliberately LOUD — carries across the map
+
+    this._setSource(panner, x, y);
+
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(980, t);
+    o.frequency.exponentialRampToValueAtTime(560, t + 0.35);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.7, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
+
+    o.connect(g);
+    g.connect(panner);
+    panner.connect(this.master);
+    o.start(t);
+    o.stop(t + 1.2);
+  }
+
+  // ------------------------------------------------------------------------
   // Internals
   // ------------------------------------------------------------------------
   _playHeartbeat(intensity) {

@@ -284,16 +284,21 @@ export class PlayerA {
 
     if (this._beaconFlash > 0) this._beaconFlash = Math.max(0, this._beaconFlash - 0.02);
 
-    // ---- Background: dark void with a red tide that rises with danger ----
+    // ---- Deep void: a red tide rises with danger ----
+    const dread = Math.max(ghostNear, tension * 0.35);
     const bg = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, Math.max(w, h) * 0.75);
-    bg.addColorStop(0, `rgba(${Math.floor(20 + ghostNear * 90)}, 8, 10, 1)`);
-    bg.addColorStop(1, '#020304');
+    bg.addColorStop(0, `rgba(${Math.floor(14 + dread * 60)}, 6, 8, 1)`);
+    bg.addColorStop(1, '#010203');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // ---- Heartbeat breathing: whole terminal pulses with B's pulse ----
-    if (heartPulse > 0.02) {
-      ctx.fillStyle = `rgba(255, 59, 107, ${heartPulse * tension * 0.05})`;
+    // ---- Heartbeat: the terminal's edges bleed red with each pulse ----
+    const edge = heartPulse * (0.10 + ghostNear * 0.55);
+    if (edge > 0.01) {
+      const vg = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.30, cx, cy, Math.max(w, h) * 0.72);
+      vg.addColorStop(0, 'rgba(255,59,107,0)');
+      vg.addColorStop(1, `rgba(255,59,107,${Math.min(0.8, edge).toFixed(3)})`);
+      ctx.fillStyle = vg;
       ctx.fillRect(0, 0, w, h);
     }
 
@@ -352,7 +357,7 @@ export class PlayerA {
     ctx.fillText('B', cx, cy + R + 16);
     ctx.fillText('L', cx - R - 12, cy + 4);
 
-    // ---- Beacons on the ring (amber dots) ----
+    // ---- Echo channels on the dial: numbered dots, the tuned one glows ----
     const now = performance.now() * 0.002;
     (state.beacons || []).forEach((b, i) => {
       if (!isFinite(b.angle)) return;
@@ -361,23 +366,28 @@ export class PlayerA {
       const pulse = 0.5 + 0.5 * Math.sin(now * 1.6 + i * 1.3);
 
       if (b.collected) {
-        ctx.fillStyle = 'rgba(255,184,75,0.18)';
+        ctx.fillStyle = 'rgba(255,184,75,0.15)';
         ctx.beginPath();
-        ctx.arc(bx, by, 2, 0, Math.PI * 2);
+        ctx.arc(bx, by, 1.6, 0, Math.PI * 2);
         ctx.fill();
         return;
       }
 
-      const alpha = b.active ? 0.95 : 0.45;
-      const size  = b.active ? 4.5 : 3;
+      const alpha = b.active ? 0.95 : 0.38;
+      const size  = b.active ? 4.5 : 2.5;
 
       ctx.shadowColor = '#ffb84b';
-      ctx.shadowBlur  = b.active ? 10 + pulse * 8 : 4;
+      ctx.shadowBlur  = b.active ? 10 + pulse * 8 : 3;
       ctx.fillStyle   = `rgba(255,184,75,${alpha})`;
       ctx.beginPath();
       ctx.arc(bx, by, size, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+
+      // channel numeral — the only number on the dial
+      ctx.fillStyle = b.active ? 'rgba(255,184,75,0.95)' : 'rgba(255,184,75,0.30)';
+      ctx.font = b.active ? 'bold 12px "Courier New", monospace' : '10px "Courier New", monospace';
+      ctx.fillText(String(i + 1), bx, by - 11);
 
       if (b.active) {
         ctx.strokeStyle = `rgba(255,184,75,${0.35 + pulse * 0.35})`;
@@ -385,12 +395,6 @@ export class PlayerA {
         ctx.beginPath();
         ctx.arc(bx, by, 9 + pulse * 4, 0, Math.PI * 2);
         ctx.stroke();
-
-        ctx.fillStyle = 'rgba(255,184,75,0.9)';
-        ctx.font = 'bold 12px "Courier New", monospace';
-        ctx.fillText(`B${i + 1}`, bx, by - 14);
-        ctx.font = '10px "Courier New", monospace';
-        ctx.fillText(b.dist.toFixed(1), bx, by + 18);
       }
     });
 
@@ -417,30 +421,18 @@ export class PlayerA {
       }
     }
 
-    // ---- Center readout: verbal-aid for the active beacon ----
+    // ---- Center: which echo the dial is tuned to (no bearings, no units) ----
     const activeB = (state.beacons || []).find(b => b.active && !b.collected);
     ctx.textAlign = 'center';
-    if (activeB && isFinite(activeB.angle)) {
-      const deg = Math.round((activeB.angle * 180) / Math.PI);
-      const side = Math.abs(deg) < 8 ? 'DEAD AHEAD'
-                 : deg > 0 ? `${deg}° RIGHT` : `${-deg}° LEFT`;
-      ctx.fillStyle = 'rgba(255,184,75,0.95)';
-      ctx.font = 'bold 15px "Courier New", monospace';
-      ctx.fillText(side, cx, cy - 8);
-      ctx.fillStyle = 'rgba(154,240,160,0.6)';
-      ctx.font = '11px "Courier New", monospace';
-      ctx.fillText(`${activeB.dist.toFixed(1)} units`, cx, cy + 10);
+    if (activeB) {
+      const i = state.beacons.indexOf(activeB);
+      ctx.fillStyle = 'rgba(255,184,75,0.9)';
+      ctx.font = 'bold 16px "Courier New", monospace';
+      ctx.fillText(`ECHO ${i + 1}`, cx, cy - 4);
     } else {
-      ctx.fillStyle = 'rgba(154,240,160,0.5)';
+      ctx.fillStyle = 'rgba(154,240,160,0.55)';
       ctx.font = 'bold 14px "Courier New", monospace';
-      ctx.fillText('ALL ECHOES', cx, cy);
-    }
-
-    // ---- Ghost distance readout ----
-    if (isFinite(ghostDist)) {
-      ctx.fillStyle = ghostNear > 0.5 ? '#ff3b6b' : 'rgba(255,59,107,0.65)';
-      ctx.font = '11px "Courier New", monospace';
-      ctx.fillText(`ENTITY ${ghostDist.toFixed(1)}`, cx, cy + R + 34);
+      ctx.fillText('SIGNAL CLEAR', cx, cy - 4);
     }
 
     // ---- Live spectrum: what Player A is hearing right now ----
@@ -464,7 +456,7 @@ export class PlayerA {
 
       ctx.fillStyle = 'rgba(154,240,160,0.35)';
       ctx.font = '9px "Courier New", monospace';
-      ctx.fillText('AUDIO SENSORS', cx, sy + 12);
+      ctx.fillText('· SIGNAL ·', cx, sy + 12);
     }
   }
 
