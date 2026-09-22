@@ -154,8 +154,9 @@ export class PlayerB {
       const rx = -Math.sin(this.yaw);
       const ry =  Math.cos(this.yaw);
 
-      const wx = (mx * fx + my * rx);
-      const wy = (mx * fy + my * ry);
+      // world velocity = forward * (W/S input) + right * (A/D input)
+      const wx = (my * fx + mx * rx);
+      const wy = (my * fy + mx * ry);
 
       const dxStep = wx * speed * dt;
       const dyStep = wy * speed * dt;
