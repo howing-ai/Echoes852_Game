@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Echoes of Hong Kong // Prototype v0.2</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23040a08'/><rect x='6' y='6' width='20' height='20' fill='none' stroke='%239af0a0' stroke-width='1.6'/><circle cx='16' cy='16' r='3.2' fill='none' stroke='%239af0a0' stroke-width='1.4'/><circle cx='16' cy='16' r='1.4' fill='%239af0a0'/></svg>" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- ============== CRT OVERLAY ============== -->
+  <div id="crt-overlay" aria-hidden="true"></div>
+
+  <!-- ============== TITLE / ROLE SELECT ============== -->
+  <section id="title-screen" class="screen">
+    <h1>ECHOES<br/><em>OF HONG&nbsp;KONG</em></h1>
+    <p class="tagline">two players &middot; one asymmetric truth</p>
+
+    <p class="role-prompt">// SELECT YOUR ROLE</p>
+
+    <div class="role-buttons">
+      <button id="role-a-btn" class="role-button" type="button" data-role="A">
+        <span class="rb-tag">// ROLE A</span>
+        <span class="rb-title">SENSOR &middot; THE EARS</span>
+        <span class="rb-desc">You are deaf to nothing. Hear the beacons and the ghost through your partner's ears. Guide them by voice.</span>
+        <span class="rb-keys"><kbd>LISTEN</kbd><kbd>1-5</kbd><kbd>SPEAK</kbd></span>
+      </button>
+      <button id="role-b-btn" class="role-button" type="button" data-role="B">
+        <span class="rb-tag">// ROLE B</span>
+        <span class="rb-title">DRIFTER &middot; THE EYES</span>
+        <span class="rb-desc">You are completely deaf. Navigate by sight alone. Your survival depends on your partner's voice.</span>
+        <span class="rb-keys"><kbd>WASD</kbd><kbd>MOUSE</kbd><kbd>E</kbd></span>
+      </button>
+    </div>
+
+    <p class="hint">open a second tab on any device &middot; pick the other role &middot; communicate via voice</p>
+    <p class="hint dim">Press <kbd>TAB</kbd> in-game to toggle split / stacked layout.</p>
+  </section>
+
+  <!-- ============== GAME STAGE ============== -->
+  <main id="game-container" class="hidden">
+    <!-- ========== PLAYER A: SENSOR TERMINAL (the ears) ========== -->
+    <section id="player-a-panel" class="viewport">
+      <header class="vp-header">
+        <span class="tag">PLAYER&nbsp;A &nbsp;//&nbsp; SENSOR&nbsp;TERMINAL</span>
+        <span class="status" id="status-a">SENSORS NOMINAL</span>
+      </header>
+      <div class="vp-canvas-wrap">
+        <canvas id="map-canvas"></canvas>
+      </div>
+      <footer id="sensor-readout" class="sensor">
+        <div class="sensor-row">
+          <span class="lbl">PROX</span>
+          <div class="bar"><div id="proximity-bar"></div></div>
+          <span class="val" id="proximity-val">0.00</span>
+        </div>
+        <div class="sensor-row">
+          <span class="lbl">AGGR</span>
+          <div class="bar"><div id="aggression-bar"></div></div>
+          <span class="val" id="aggression-val">0.00</span>
+        </div>
+        <div class="sensor-row">
+          <span class="lbl">BEACON</span>
+          <div class="bar"><div id="beacon-bar"></div></div>
+          <span class="val" id="beacon-val">--</span>
+        </div>
+      </footer>
+    </section>
+
+    <!-- ========== PLAYER B: FIRST-PERSON DRIFT ========== -->
+    <section id="player-b-panel" class="viewport">
+      <header class="vp-header">
+        <span class="tag">PLAYER&nbsp;B &nbsp;//&nbsp; FIRST-PERSON&nbsp;DRIFT</span>
+        <span class="status" id="status-b">DRIFTING</span>
+      </header>
+      <div class="vp-canvas-wrap">
+        <canvas id="fp-canvas"></canvas>
+        <div id="static-overlay"></div>
+        <div id="vignette-b"></div>
+        <div id="crosshair">+</div>
+        <div id="audio-hud">DEAF MODE — NO AUDIO CUES</div>
+        <div id="target-indicator">TARGET: <span id="target-text">--</span></div>
+        <div id="compass">
+          <span data-dir="N">N</span>
+          <span class="tick">|</span>
+          <span data-dir="E">E</span>
+          <span class="tick">|</span>
+          <span data-dir="S">S</span>
+          <span class="tick">|</span>
+          <span data-dir="W">W</span>
+        </div>
+        <div id="beacon-collected">0 / 0 echoes absorbed</div>
+
+        <!-- Pointer-lock capture prompt (hidden once mouse is captured) -->
+        <div id="capture-overlay" class="capture-overlay">
+          <div class="capture-inner">
+            <h3>PLAYER&nbsp;B</h3>
+            <p class="cap-big">CLICK&nbsp;TO&nbsp;CAPTURE</p>
+            <div class="cap-keys">
+              <div><span class="k">W A S D</span> move</div>
+              <div><span class="k">SHIFT</span> sprint</div>
+              <div><span class="k">MOUSE</span> look around</div>
+              <div><span class="k">E</span> absorb active beacon</div>
+              <div><span class="k">ESC</span> release mouse</div>
+              <div><span class="k">TAB</span> toggle split / stacked</div>
+            </div>
+            <p class="cap-sync" id="sync-status">awaiting link…</p>
+            <p class="cap-note">you are deaf — follow your partner's voice</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============== SCRIPT ENTRY (ES modules) ============== -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

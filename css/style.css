@@ -1,0 +1,524 @@
+/* ==========================================================================
+   Echoes of Hong Kong — retro CRT stylesheet
+   - Deep dark palette
+   - Phosphor green / amber / warning red
+   - High-contrast wireframe UI
+   - Toggleable split / stacked view layout
+   ========================================================================== */
+
+:root {
+  --crt-bg:        #040608;
+  --crt-panel:    #07090c;
+  --crt-ink:      #9af0a0;       /* phosphor green */
+  --crt-ink-dim:  rgba(154,240,160,0.35);
+  --crt-amber:    #ffb84b;
+  --crt-warn:     #ff3b6b;
+  --crt-line:     #1b2a1f;
+  --crt-line-2:   #0e1612;
+  --scanline:     rgba(0,0,0,0.28);
+  --glow-soft:    0 0 4px var(--crt-ink);
+  --glow-strong:  0 0 10px var(--crt-ink), 0 0 20px var(--crt-ink);
+  --glow-warn:    0 0 8px var(--crt-warn), 0 0 16px var(--crt-warn);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: var(--crt-bg);
+  color: var(--crt-ink);
+  font-family: "Courier New", "Consolas", monospace;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* =================== CRT OVERLAY =================== */
+#crt-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 2px,
+      var(--scanline) 3px,
+      var(--scanline) 4px
+    ),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.85) 100%);
+  mix-blend-mode: multiply;
+  animation: crtFlicker 0.18s steps(2,end) infinite;
+}
+
+@keyframes crtFlicker {
+  0%,100% { opacity: 0.93; }
+  50%     { opacity: 1; }
+}
+
+/* =================== SCREEN (TITLE) =================== */
+.screen {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 35%, #0d1610 0%, #03060a 80%);
+  text-align: center; z-index: 9000;
+}
+.screen.hidden { display: none; }
+
+#title-screen h1 {
+  font-size: clamp(2.4rem, 5vw, 4.4rem);
+  letter-spacing: 0.4rem;
+  text-shadow: var(--glow-strong);
+  line-height: 1;
+  margin-bottom: 0.4rem;
+}
+#title-screen h1 em {
+  font-style: normal;
+  color: var(--crt-amber);
+  text-shadow: 0 0 8px var(--crt-amber), 0 0 20px var(--crt-amber);
+}
+
+.tagline {
+  color: var(--crt-amber);
+  letter-spacing: 0.4rem;
+  margin-bottom: 2.4rem;
+  font-size: 0.8rem;
+}
+
+.role-grid {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2.4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.role {
+  border: 1px solid var(--crt-ink);
+  padding: 1.2rem 1.4rem;
+  width: 280px;
+  background: rgba(154,240,160,0.04);
+  position: relative;
+  text-align: left;
+}
+.role::before, .role::after {
+  content: ""; position: absolute;
+  width: 12px; height: 12px;
+  border: 1px solid var(--crt-amber);
+}
+.role::before { top: -1px; left: -1px;  border-right: none; border-bottom: none; }
+.role::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+.role-tag {
+  color: var(--crt-amber);
+  font-size: 0.7rem;
+  letter-spacing: 0.2rem;
+  margin-bottom: 0.4rem;
+}
+
+.role h2 {
+  font-size: 1.1rem;
+  letter-spacing: 0.2rem;
+  margin-bottom: 0.6rem;
+  text-shadow: var(--glow-soft);
+}
+
+.role p {
+  font-size: 0.78rem;
+  color: var(--crt-ink-dim);
+  line-height: 1.5;
+  margin-bottom: 0.6rem;
+}
+
+.role-keys { list-style: none; font-size: 0.7rem; }
+.role-keys li {
+  color: var(--crt-ink-dim);
+  margin: 0.15rem 0;
+  letter-spacing: 0.1rem;
+}
+.role-keys kbd {
+  display: inline-block;
+  background: rgba(154,240,160,0.08);
+  border: 1px solid var(--crt-ink);
+  padding: 1px 6px;
+  margin-right: 0.3rem;
+  font-size: 0.65rem;
+  color: var(--crt-ink);
+}
+
+/* ----- Role-select buttons (replaces single start-btn) ----- */
+.role-prompt {
+  color: var(--crt-amber);
+  font-size: 0.8rem;
+  letter-spacing: 0.3rem;
+  margin-bottom: 1rem;
+  text-shadow: 0 0 4px var(--crt-amber);
+}
+
+.role-buttons {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2.4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.role-button {
+  position: relative;
+  width: 300px;
+  background: rgba(154,240,160,0.04);
+  border: 1px solid var(--crt-ink);
+  padding: 1.2rem 1.4rem 1.1rem;
+  font-family: inherit;
+  text-align: left;
+  color: var(--crt-ink);
+  cursor: pointer;
+  display: flex; flex-direction: column;
+  gap: 0.5rem;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.role-button::before, .role-button::after {
+  content: ""; position: absolute;
+  width: 12px; height: 12px;
+  border: 1px solid var(--crt-amber);
+}
+.role-button::before { top: -1px; left: -1px;  border-right: none; border-bottom: none; }
+.role-button::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+.role-button[data-role="B"]::before, .role-button[data-role="B"]::after { border-color: var(--crt-warn); }
+
+.role-button:hover {
+  background: rgba(154,240,160,0.10);
+  box-shadow: var(--glow-strong);
+  transform: translateY(-1px);
+}
+.role-button[data-role="B"]:hover {
+  background: rgba(255,59,107,0.08);
+  box-shadow: 0 0 12px var(--crt-warn), 0 0 22px rgba(255,59,107,0.4);
+}
+
+.role-button .rb-tag {
+  color: var(--crt-amber);
+  font-size: 0.72rem;
+  letter-spacing: 0.25rem;
+}
+.role-button[data-role="B"] .rb-tag { color: var(--crt-warn); }
+
+.role-button .rb-title {
+  font-size: 1.05rem;
+  letter-spacing: 0.22rem;
+  text-shadow: var(--glow-soft);
+}
+
+.role-button .rb-desc {
+  font-size: 0.78rem;
+  color: var(--crt-ink-dim);
+  line-height: 1.45;
+}
+
+.role-button .rb-keys {
+  display: flex; gap: 6px; margin-top: 0.2rem;
+}
+.role-button .rb-keys kbd {
+  background: rgba(154,240,160,0.08);
+  border: 1px solid var(--crt-ink);
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  color: var(--crt-ink);
+  letter-spacing: 0.1rem;
+}
+.role-button[data-role="B"] .rb-keys kbd {
+  border-color: rgba(255,59,107,0.5);
+  background: rgba(255,59,107,0.06);
+  color: #ffd6dd;
+}
+
+#start-btn {
+  background: transparent;
+  border: 1px solid var(--crt-ink);
+  color: var(--crt-ink);
+  padding: 0.85rem 2.8rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  letter-spacing: 0.4rem;
+  cursor: pointer;
+  text-shadow: var(--glow-soft);
+  box-shadow: var(--glow-soft);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+#start-btn:hover {
+  background: rgba(154,240,160,0.12);
+  box-shadow: var(--glow-strong);
+}
+
+.hint { margin-top: 1.4rem; font-size: 0.72rem; color: var(--crt-ink-dim); letter-spacing: 0.25rem; }
+.hint.dim { opacity: 0.6; }
+.hint kbd {
+  background: rgba(154,240,160,0.08);
+  border: 1px solid var(--crt-ink);
+  padding: 1px 5px;
+  font-size: 0.65rem;
+}
+
+/* =================== GAME CONTAINER =================== */
+#game-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px;
+  width: 100vw; height: 100vh;
+  background: var(--crt-bg);
+}
+#game-container.hidden { display: none; }
+
+/* toggle: stacked */
+#game-container.toggled {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* Single-role mode (Player A OR Player B) — only one panel visible, full-bleed */
+#game-container.role-only {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+#game-container.role-only #player-a-panel,
+#game-container.role-only #player-b-panel { display: none; }
+#game-container.role-only.is-role-a #player-a-panel { display: flex; }
+#game-container.role-only.is-role-b #player-b-panel { display: flex; }
+
+.viewport {
+  position: relative;
+  background: var(--crt-panel);
+  border: 1px solid var(--crt-line);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+}
+.viewport::before {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  border: 1px solid rgba(154,240,160,0.08);
+  z-index: 5;
+}
+
+.vp-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--crt-line);
+  font-size: 0.7rem; letter-spacing: 0.2rem;
+  background: rgba(154,240,160,0.04);
+  z-index: 4; position: relative;
+}
+.vp-header .tag { color: var(--crt-ink); text-shadow: var(--glow-soft); }
+.vp-header .status {
+  color: var(--crt-amber);
+  text-shadow: 0 0 4px var(--crt-amber);
+  letter-spacing: 0.2rem;
+}
+.vp-header .status.danger {
+  color: var(--crt-warn);
+  text-shadow: var(--glow-warn);
+  animation: blink 0.5s steps(2,end) infinite;
+}
+@keyframes blink { 50% { opacity: 0.4; } }
+
+.vp-canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.vp-canvas-wrap canvas {
+  width: 100%; height: 100%; display: block;
+}
+
+/* =================== SENSOR READOUT (Player A) =================== */
+#sensor-readout {
+  padding: 6px 12px;
+  border-top: 1px solid var(--crt-line);
+  background: rgba(154,240,160,0.04);
+  font-size: 0.7rem;
+}
+.sensor-row {
+  display: flex; align-items: center; gap: 8px;
+  margin: 4px 0;
+}
+.sensor-row .lbl {
+  width: 64px; letter-spacing: 0.2rem;
+  color: var(--crt-ink-dim);
+}
+.sensor-row .bar {
+  flex: 1; height: 6px;
+  background: rgba(154,240,160,0.08);
+  border: 1px solid var(--crt-line);
+  position: relative; overflow: hidden;
+}
+.sensor-row .bar > div {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--crt-ink), var(--crt-amber), var(--crt-warn));
+  transition: width 0.18s linear;
+}
+.sensor-row .val { width: 54px; text-align: right; color: var(--crt-amber); }
+
+/* =================== PLAYER B HUD =================== */
+#player-b-panel .vp-canvas-wrap { background: #020303; }
+#fp-canvas { background: #020303; }
+
+#crosshair {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--crt-ink);
+  font-size: 1.1rem; line-height: 1;
+  text-shadow: var(--glow-soft);
+  pointer-events: none; z-index: 6;
+  opacity: 0.7;
+}
+
+#compass {
+  position: absolute; bottom: 14px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 4px;
+  font-size: 0.7rem; letter-spacing: 0.2rem;
+  color: var(--crt-amber);
+  text-shadow: 0 0 4px var(--crt-amber);
+  z-index: 6;
+}
+#compass .tick { opacity: 0.35; }
+#compass span[data-dir].active {
+  color: var(--crt-ink);
+  text-shadow: var(--glow-soft);
+}
+
+#audio-hud {
+  position: absolute; top: 14px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.7rem; letter-spacing: 0.3rem;
+  color: var(--crt-ink);
+  text-shadow: var(--glow-soft);
+  z-index: 6;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.45; } }
+
+#beacon-collected {
+  position: absolute; top: 38px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem; letter-spacing: 0.2rem;
+  color: var(--crt-amber);
+  z-index: 6;
+  text-shadow: 0 0 4px var(--crt-amber);
+}
+
+#static-overlay {
+  position: absolute; inset: 0;
+  pointer-events: none; z-index: 5;
+  opacity: 0;
+  background:
+    repeating-radial-gradient(circle at 30% 40%, rgba(255,255,255,0.08) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,0.05) 2px 3px),
+    radial-gradient(circle at 50% 50%, rgba(255,59,107,0.18), transparent 70%);
+  mix-blend-mode: screen;
+  transition: opacity 0.25s;
+}
+
+#vignette-b {
+  position: absolute; inset: 0;
+  pointer-events: none; z-index: 4;
+  background: radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.75) 95%);
+}
+
+/* =================== TARGET INDICATOR (Player B) =================== */
+#target-indicator {
+  position: absolute; top: 14px; right: 18px;
+  font-size: 0.7rem; letter-spacing: 0.25rem;
+  color: var(--crt-amber);
+  text-shadow: 0 0 4px var(--crt-amber);
+  z-index: 6;
+  padding: 4px 8px;
+  border: 1px solid rgba(255,184,75,0.4);
+  background: rgba(255,184,75,0.06);
+}
+#target-indicator.collected {
+  color: var(--crt-ink-dim);
+  border-color: rgba(154,240,160,0.25);
+  text-shadow: none;
+}
+
+/* =================== POINTER-LOCK CAPTURE OVERLAY =================== */
+.capture-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 4, 6, 0.78);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.capture-overlay.hidden { opacity: 0; pointer-events: none; }
+
+.capture-inner {
+  border: 1px solid var(--crt-warn);
+  padding: 1.4rem 2rem 1.2rem;
+  background: var(--crt-panel);
+  box-shadow: 0 0 18px rgba(255,59,107,0.45);
+  text-align: center;
+  max-width: 360px;
+}
+.capture-inner h3 {
+  color: var(--crt-warn);
+  letter-spacing: 0.4rem;
+  font-size: 1rem;
+  text-shadow: 0 0 6px var(--crt-warn);
+  margin-bottom: 0.4rem;
+}
+.capture-inner .cap-big {
+  font-size: 1.4rem;
+  letter-spacing: 0.4rem;
+  color: var(--crt-ink);
+  text-shadow: var(--glow-soft);
+  margin-bottom: 1rem;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.cap-keys {
+  display: flex; flex-direction: column;
+  gap: 4px;
+  margin-bottom: 0.8rem;
+  font-size: 0.72rem;
+  color: var(--crt-ink-dim);
+  letter-spacing: 0.12rem;
+  text-align: left;
+}
+.cap-keys .k {
+  display: inline-block;
+  min-width: 70px;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--crt-ink);
+  background: rgba(154,240,160,0.08);
+  color: var(--crt-ink);
+  font-size: 0.65rem;
+  text-align: center;
+}
+.cap-sync {
+  margin-top: 0.5rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.2rem;
+  color: var(--crt-amber);
+}
+.cap-sync.linked { color: var(--crt-ink); text-shadow: var(--glow-soft); }
+.cap-sync.error  { color: var(--crt-warn); }
+.cap-note {
+  margin-top: 0.35rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.15rem;
+  color: var(--crt-warn);
+  opacity: 0.8;
+}
+
+/* =================== PLAYER A SENSOR TERMINAL =================== */
+#player-a-panel .vp-canvas-wrap { background: #020304; }
+#map-canvas { background: #020304; }
