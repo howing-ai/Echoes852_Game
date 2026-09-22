@@ -657,6 +657,8 @@ function render() {
 // -------------------------------------------------------------------------
 // MAIN LOOP
 // -------------------------------------------------------------------------
+let lastTime = performance.now();
+
 function loop(now) {
   const dt = Math.min(0.1, (now - lastTime) / 1000);
   lastTime = now;
