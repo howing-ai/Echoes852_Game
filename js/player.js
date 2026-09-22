@@ -29,8 +29,8 @@ export class PlayerB {
     this.captureOverlay = opts.captureOverlay || null;
     this.syncStatus     = opts.syncStatus     || null;
 
-    this.x     = map.playerSpawn.x + 0.5;
-    this.y     = map.playerSpawn.y + 0.5;
+    this.x     = map.playerSpawn.x;
+    this.y     = map.playerSpawn.y;
     this.yaw   = 0;     // 0 = facing +X (east); grows counter-clockwise
     this.pitch = 0;
     this.fov   = Math.PI / 3;   // 60°
@@ -38,6 +38,12 @@ export class PlayerB {
     this.speedWalk   = 3.8;
     this.speedSprint = 6.2;
     this.turnSpeed   = 1.8;
+
+    // ---- Movement smoothing ----
+    // Velocity eases in/out instead of snapping -> no jerky starts/stops.
+    this.accel   = 14;      // units/s^2 toward target velocity
+    this.velX    = 0;
+    this.velY    = 0;
 
     // ---- Collision ----
     // Half-extent of the player's collision circle (in map units).
@@ -57,6 +63,10 @@ export class PlayerB {
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup',   (e) => { this.keys[e.code] = false; });
+
+    // Lose focus mid-keypress (tab switch, alt-tab) -> clear all keys so
+    // the player doesn't keep drifting forever.
+    window.addEventListener('blur', () => { this.keys = {}; });
 
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = (document.pointerLockElement === this.canvas);
@@ -86,6 +96,9 @@ export class PlayerB {
       this.yaw   += e.movementX * 0.0025;
       this.pitch += e.movementY * 0.0022;
       this.pitch = Math.max(-0.9, Math.min(0.9, this.pitch));
+      // keep yaw bounded to avoid unbounded float drift over long sessions
+      if (this.yaw >  Math.PI * 4) this.yaw -= Math.PI * 2;
+      if (this.yaw < -Math.PI * 4) this.yaw += Math.PI * 2;
     });
   }
 
@@ -126,8 +139,8 @@ export class PlayerB {
         return;
       }
     }
-    this.x = this.map.playerSpawn.x + 0.5;
-    this.y = this.map.playerSpawn.y + 0.5;
+    this.x = this.map.playerSpawn.x;
+    this.y = this.map.playerSpawn.y;
     this.yaw = 0;
   }
 
@@ -143,9 +156,9 @@ export class PlayerB {
     const sprint = !!this.keys['ShiftLeft'] || !!this.keys['ShiftRight'];
     const speed  = sprint ? this.speedSprint : this.speedWalk;
 
-    this.isMoving = (mx !== 0 || my !== 0);
-
-    if (this.isMoving) {
+    // ---- Desired velocity in world space (relative to facing) ----
+    let tx = 0, ty = 0;
+    if (mx !== 0 || my !== 0) {
       const len = Math.hypot(mx, my);
       mx /= len; my /= len;
 
@@ -155,17 +168,40 @@ export class PlayerB {
       const ry =  Math.cos(this.yaw);
 
       // world velocity = forward * (W/S input) + right * (A/D input)
-      const wx = (my * fx + mx * rx);
-      const wy = (my * fy + mx * ry);
+      tx = (my * fx + mx * rx) * speed;
+      ty = (my * fy + mx * ry) * speed;
+    }
 
-      const dxStep = wx * speed * dt;
-      const dyStep = wy * speed * dt;
+    // ---- Smooth acceleration / deceleration (exponential ease) ----
+    const k = 1 - Math.exp(-this.accel * dt);
+    this.velX += (tx - this.velX) * k;
+    this.velY += (ty - this.velY) * k;
+    // snap to zero when close enough (prevents infinite micro-drift)
+    if (Math.hypot(this.velX, this.velY) < 0.01) { this.velX = 0; this.velY = 0; }
 
-      // Axis-separated collision — slide along walls
-      const tryX = this.x + dxStep;
+    this.isMoving = Math.hypot(this.velX, this.velY) > 0.05;
+
+    // ---- Sub-stepped, axis-separated collision ----
+    // Split the frame's travel into steps no larger than the collision
+    // radius so a low-FPS spike can never tunnel through a wall.
+    const totalDx = this.velX * dt;
+    const totalDy = this.velY * dt;
+    const travel  = Math.hypot(totalDx, totalDy);
+    if (travel <= 0) return;
+
+    const maxStep = this.radius * 0.9;
+    const steps   = Math.max(1, Math.ceil(travel / maxStep));
+    const stepDx  = totalDx / steps;
+    const stepDy  = totalDy / steps;
+
+    for (let s = 0; s < steps; s++) {
+      // X axis first, then Y — a blocked axis slides along the wall
+      const tryX = this.x + stepDx;
       if (!this._collidesAt(tryX, this.y)) this.x = tryX;
-      const tryY = this.y + dyStep;
+      else this.velX = 0;   // wall stops this axis
+      const tryY = this.y + stepDy;
       if (!this._collidesAt(this.x, tryY)) this.y = tryY;
+      else this.velY = 0;
     }
   }
 
