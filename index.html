@@ -44,9 +44,36 @@
       <header class="vp-header">
         <span class="tag">PLAYER&nbsp;A &nbsp;//&nbsp; RECEIVER</span>
         <span class="status" id="status-a">SENSORS NOMINAL</span>
+        <button id="cal-btn" class="cal-btn hidden" type="button" title="Calibrate spatial audio">CAL</button>
       </header>
       <div class="vp-canvas-wrap">
         <canvas id="map-canvas"></canvas>
+
+        <!-- ===== SPATIAL CALIBRATION OVERLAY (Player A only) ===== -->
+        <div id="cal-overlay" class="cal-overlay hidden">
+          <div class="cal-frame">
+            <div class="cal-head">
+              <span class="cal-title">// SPATIAL&nbsp;CALIBRATION</span>
+              <button id="cal-close" class="cal-x" type="button">&times;</button>
+            </div>
+            <p id="cal-instruction">a ping will sound &mdash; click on the pad where you hear it &middot; <kbd>SPACE</kbd> replays</p>
+            <div class="cal-pad-wrap">
+              <canvas id="cal-pad" width="420" height="420"></canvas>
+            </div>
+            <div id="cal-progress"></div>
+            <div id="cal-result" class="cal-result hidden"></div>
+            <div id="cal-warning" class="cal-warning hidden">&#9888; CHECK YOUR HEADPHONES &mdash; <span id="cal-warning-reason"></span></div>
+            <div class="cal-remap">
+              <label>VOL&nbsp;MIN <input id="cal-vmin" type="range" min="0" max="1.5" step="0.05" value="1" /><span id="cal-vmin-val">1.00</span></label>
+              <label>VOL&nbsp;MAX <input id="cal-vmax" type="range" min="0" max="2" step="0.05" value="1" /><span id="cal-vmax-val">1.00</span></label>
+              <div class="cal-buttons">
+                <button id="cal-test" type="button">TEST&nbsp;TONE</button>
+                <button id="cal-apply" type="button">APPLY&nbsp;REMAP</button>
+                <button id="cal-reset" type="button">RESET</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <footer id="a-terminal-hint" class="a-hint">
         <span class="ah-k">1&ndash;5</span> ping an echo &mdash; loud enough for the entity to hear &middot; guide by voice, listen through their ears

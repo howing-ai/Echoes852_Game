@@ -9,6 +9,7 @@
 import { PlayerB, PlayerA } from './player.js';
 import { Ghost, GHOST_STATE } from './ghost.js';
 import { SpatialAudio }       from './audio.js';
+import { CalibrationSession, loadCal, saveCal, clearCal, CAL } from './calibration.js';
 
 // -------------------------------------------------------------------------
 // GAME MAP — 24x24 grid, 1 = wall, 0 = open
@@ -114,6 +115,24 @@ const statusB        = document.getElementById('status-b');
 const targetText     = document.getElementById('target-text');
 const targetIndicator = document.getElementById('target-indicator');
 const captureOverlay = document.getElementById('capture-overlay');
+
+// --- Spatial calibration UI (Player A) ---
+const calBtn        = document.getElementById('cal-btn');
+const calOverlay    = document.getElementById('cal-overlay');
+const calClose      = document.getElementById('cal-close');
+const calPad        = document.getElementById('cal-pad');
+const calInstr      = document.getElementById('cal-instruction');
+const calProgress   = document.getElementById('cal-progress');
+const calResult     = document.getElementById('cal-result');
+const calWarning    = document.getElementById('cal-warning');
+const calWarnReason = document.getElementById('cal-warning-reason');
+const calVMin       = document.getElementById('cal-vmin');
+const calVMinVal    = document.getElementById('cal-vmin-val');
+const calVMax       = document.getElementById('cal-vmax');
+const calVMaxVal    = document.getElementById('cal-vmax-val');
+const calTest       = document.getElementById('cal-test');
+const calApply      = document.getElementById('cal-apply');
+const calReset      = document.getElementById('cal-reset');
 const syncStatus     = document.getElementById('sync-status');
 
 const proxBar      = document.getElementById('proximity-bar');
@@ -297,6 +316,10 @@ function selectRole(r) {
   if (r === 'A') {
     audio.init();
     audio.resume();
+    // Restore persisted spatial calibration (polar remap + loudness env)
+    const saved = loadCal();
+    if (saved) audio.setCalibration(saved);
+    calBtn.classList.remove('hidden');
   }
 
   // Tell the channel we joined and who we are.
@@ -308,6 +331,11 @@ function selectRole(r) {
 }
 
 window.addEventListener('keydown', (e) => {
+  // Calibration overlay open: SPACE replays the ping, game keys are inert
+  if (!calOverlay.classList.contains('hidden')) {
+    if (e.code === 'Space') { e.preventDefault(); calSession?.replay(); }
+    return;
+  }
   // Layout toggle (Player A only sees one panel anyway, but harmless)
   if (e.code === 'Tab') {
     e.preventDefault();
@@ -326,7 +354,9 @@ window.addEventListener('keydown', (e) => {
     }
   }
   // 1-5 — Player A selects which beacon to direct B toward
-  if (game.phase === STATE.PLAY && game.role === 'A' && /^Digit[1-5]$/.test(e.code)) {
+  // (gated while the spatial calibration overlay is open)
+  if (game.phase === STATE.PLAY && game.role === 'A' && /^Digit[1-5]$/.test(e.code)
+      && calOverlay.classList.contains('hidden')) {
     const idx = Number(e.code.slice(5)) - 1;
     if (idx >= 0 && idx < playerA.beacons.length && !playerA.beacons[idx].collected) {
       playerA.setActiveBeaconIdx(idx);
@@ -354,6 +384,176 @@ playerA.setActiveBeaconIdx = function (idx) {
     if (game.phase === STATE.PLAY) triggerLure(idx);
   }
 };
+
+// =========================================================================
+// SPATIAL CALIBRATION & REMAPPING (Player A)
+//   Interactive polar pad: pings sound at hidden positions; A clicks where
+//   they perceive them. Deviation metrics diagnose the audio setup
+//   (reversed channels / mono / general inaccuracy), and an affine inverse
+//   map is fitted to pre-compensate the spatial panning. VOL MIN/MAX
+//   sliders remap the loudness envelope. Persisted in localStorage.
+// =========================================================================
+let calSession = null;
+let calLastResult = null;
+
+const calPadCtx = calPad.getContext('2d');
+
+function calPadGeometry() {
+  const s = Math.min(calPad.width, calPad.height);
+  return { c: s / 2, R: s / 2 - 34 };
+}
+
+function renderCalPad(trial) {
+  const { c, R } = calPadGeometry();
+  const ctx = calPadCtx;
+  ctx.clearRect(0, 0, calPad.width, calPad.height);
+  ctx.fillStyle = '#020604';
+  ctx.fillRect(0, 0, calPad.width, calPad.height);
+
+  // rings at 4 / 8 / 12 / 16 units
+  ctx.strokeStyle = 'rgba(154,240,160,0.14)';
+  ctx.lineWidth = 1;
+  for (let u = 4; u <= CAL.D_MAX; u += 4) {
+    ctx.beginPath();
+    ctx.arc(c, c, (u / CAL.D_MAX) * R, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // crosshair
+  ctx.beginPath();
+  ctx.moveTo(c - R, c); ctx.lineTo(c + R, c);
+  ctx.moveTo(c, c - R); ctx.lineTo(c, c + R);
+  ctx.stroke();
+
+  // frame letters: F(ront) R(ight) B(ack) L(eft)
+  ctx.fillStyle = 'rgba(154,240,160,0.45)';
+  ctx.font = '11px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('F', c, c - R - 10);
+  ctx.fillText('B', c, c + R + 18);
+  ctx.textAlign = 'left';  ctx.fillText('R', c + R + 8,  c + 4);
+  ctx.textAlign = 'right'; ctx.fillText('L', c - R - 8,  c + 4);
+  ctx.textAlign = 'center';
+
+  const padXY = p => [c + (p.r * Math.sin(p.theta) / CAL.D_MAX) * R,
+                      c - (p.r * Math.cos(p.theta) / CAL.D_MAX) * R];
+
+  if (trial && trial.perceived) {
+    // feedback: perceived (green) vs actual (amber) + error line
+    const [ax, ay] = padXY(trial.actual);
+    const [px, py] = padXY(trial.perceived);
+    ctx.strokeStyle = 'rgba(255,59,107,0.7)';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(ax, ay); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#ffb84b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#9af0a0';
+    ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI * 2); ctx.fill();
+  } else if (trial) {
+    // awaiting click: breathing centre dot
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+    ctx.fillStyle = `rgba(154,240,160,${0.25 + pulse * 0.4})`;
+    ctx.beginPath(); ctx.arc(c, c, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function calWarnText(verdict) {
+  if (verdict === 'REVERSED') return 'stereo channels appear mirrored (left/right swapped)';
+  if (verdict === 'MONO')     return 'no directional separation detected (mono output?)';
+  return 'perceived positions deviate too far from the true sources';
+}
+
+function openCalibration() {
+  if (game.role !== 'A' || !audio.ready) return;
+  calOverlay.classList.remove('hidden');
+  calResult.classList.add('hidden');
+  calWarning.classList.add('hidden');
+  calProgress.textContent = '';
+  calLastResult = null;
+  audio.enterCalibration();
+
+  const saved = loadCal();
+  calVMin.value = saved?.vMin ?? 1;
+  calVMax.value = saved?.vMax ?? 1;
+  calVMinVal.textContent = Number(calVMin.value).toFixed(2);
+  calVMaxVal.textContent = Number(calVMax.value).toFixed(2);
+
+  calSession = new CalibrationSession({
+    canvas: calPad,
+    audio,
+    onTrialStart: (trial, i) => {
+      calProgress.textContent = `PING ${i + 1} / ${CAL.TRIALS} — CLICK WHERE YOU HEAR IT`;
+      renderCalPad(null);
+    },
+    onTrial: (trial) => {
+      renderCalPad(trial);
+      calProgress.textContent = `Δ ${(trial.errs.dTheta * 180 / Math.PI).toFixed(0)}°  ·  ${trial.errs.E.toFixed(2)} dev`;
+    },
+    onFinish: (result) => {
+      calLastResult = result;
+      calProgress.textContent = '';
+      const ok = result.verdict === 'PASS';
+      calResult.classList.remove('hidden');
+      calResult.innerHTML =
+        `<span class="${ok ? 'ok' : 'bad'}">${ok ? 'CALIBRATED' : 'DEVIATION DETECTED'}</span><br>` +
+        `mean azimuth error: <span class="${Math.abs(result.meanDThetaDeg) > 22 ? 'bad' : 'ok'}">${result.meanDThetaDeg.toFixed(1)}°</span> · ` +
+        `rms deviation: <span class="${result.rmsE > CAL.RMS_WARN ? 'bad' : 'ok'}">${result.rmsE.toFixed(3)}</span><br>` +
+        `fitted remap — pan gain ×${result.correction.kT.toFixed(2)}, distance gain ×${result.correction.kR.toFixed(2)}`;
+      if (!ok) {
+        calWarnReason.textContent = calWarnText(result.verdict);
+        calWarning.classList.remove('hidden');
+      } else {
+        calWarning.classList.add('hidden');
+      }
+      calInstr.innerHTML = 'correction fitted &mdash; <kbd>APPLY REMAP</kbd> to save it &middot; close and reopen <kbd>CAL</kbd> to recalibrate';
+    },
+  });
+  calSession.start();
+}
+
+function closeCalibration() {
+  calOverlay.classList.add('hidden');
+  audio.exitCalibration();
+  calSession?.destroy();
+  calSession = null;
+}
+
+calBtn.addEventListener('click', openCalibration);
+calClose.addEventListener('click', closeCalibration);
+
+const calSliderSync = () => {
+  calVMinVal.textContent = Number(calVMin.value).toFixed(2);
+  calVMaxVal.textContent = Number(calVMax.value).toFixed(2);
+};
+calVMin.addEventListener('input', calSliderSync);
+calVMax.addEventListener('input', calSliderSync);
+
+calApply.addEventListener('click', () => {
+  const base = calLastResult?.correction ?? { kT: 1, bT: 0, kR: 1, bR: 0 };
+  const cal = { ...base, vMin: Number(calVMin.value), vMax: Number(calVMax.value) };
+  audio.setCalibration(cal);
+  saveCal(cal);
+  calApply.textContent = 'APPLIED';
+  setTimeout(() => { calApply.textContent = 'APPLY REMAP'; }, 1200);
+});
+
+calReset.addEventListener('click', () => {
+  clearCal();
+  audio.setCalibration(null);
+  calVMin.value = 1; calVMax.value = 1;
+  calSliderSync();
+  calResult.classList.add('hidden');
+  calWarning.classList.add('hidden');
+  calLastResult = null;
+});
+
+calTest.addEventListener('click', () => {
+  // Subjective check: ping at 45° right, 10 units, WITH current remap
+  const dx = 10 * Math.sin(Math.PI / 4), dy = 10 * Math.cos(Math.PI / 4);
+  audio.setCalListener(0, 0, Math.PI / 2);
+  audio.playLurePing(dx, dy);   // remapped path — verifies the correction live
+});
 
 window.addEventListener('resize', () => {
   // canvas sizes auto-update on next frame via clientWidth/Height

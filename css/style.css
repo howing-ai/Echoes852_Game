@@ -513,3 +513,133 @@ html, body {
 /* =================== PLAYER A SENSOR TERMINAL =================== */
 #player-a-panel .vp-canvas-wrap { background: #020304; }
 #map-canvas { background: #020304; }
+/* =================== SPATIAL CALIBRATION (Player A) =================== */
+.cal-btn {
+  margin-left: 10px;
+  background: none;
+  border: 1px solid rgba(255,184,75,0.5);
+  color: var(--crt-amber);
+  font-family: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.25rem;
+  padding: 2px 9px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, color 0.15s;
+}
+.cal-btn:hover { color: #fff; box-shadow: 0 0 8px rgba(255,184,75,0.6); }
+
+.cal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(2,4,3,0.94);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 60;
+  overflow-y: auto;
+}
+.cal-overlay.hidden { display: none; }
+.cal-frame {
+  border: 1px solid var(--crt-line);
+  background: var(--crt-panel);
+  box-shadow: 0 0 24px rgba(154,240,160,0.12);
+  padding: 14px 20px 16px;
+  max-width: 480px;
+  width: min(92%, 480px);
+}
+.cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cal-title {
+  color: var(--crt-amber);
+  font-size: 0.78rem;
+  letter-spacing: 0.35rem;
+  text-shadow: 0 0 6px rgba(255,184,75,0.5);
+}
+.cal-x {
+  background: none; border: none;
+  color: var(--crt-ink-dim);
+  font-size: 1.2rem; cursor: pointer;
+  padding: 0 4px;
+}
+.cal-x:hover { color: var(--crt-warn); }
+#cal-instruction {
+  color: var(--crt-ink-dim);
+  font-size: 0.66rem;
+  letter-spacing: 0.14rem;
+  margin: 0 0 8px;
+  text-align: center;
+}
+#cal-instruction kbd {
+  border: 1px solid var(--crt-line);
+  padding: 0 5px;
+  color: var(--crt-amber);
+}
+.cal-pad-wrap { display: flex; justify-content: center; }
+#cal-pad { cursor: crosshair; background: #020604; border: 1px solid var(--crt-line); width: 420px; max-width: 100%; height: auto; }
+#cal-progress {
+  text-align: center;
+  color: var(--crt-ink-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.3rem;
+  margin-top: 6px;
+  min-height: 1em;
+}
+.cal-result {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--crt-line);
+  font-size: 0.68rem;
+  line-height: 1.7;
+  color: var(--crt-ink);
+  letter-spacing: 0.08rem;
+}
+.cal-result.hidden { display: none; }
+.cal-result .ok    { color: var(--crt-ink); text-shadow: 0 0 5px rgba(154,240,160,0.5); }
+.cal-result .bad   { color: var(--crt-warn); }
+.cal-warning {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--crt-warn);
+  color: var(--crt-warn);
+  font-size: 0.7rem;
+  letter-spacing: 0.18rem;
+  text-align: center;
+  animation: cal-blink 0.9s steps(2) infinite;
+}
+.cal-warning.hidden { display: none; }
+@keyframes cal-blink { 50% { background: rgba(255,59,107,0.16); } }
+.cal-remap {
+  margin-top: 12px;
+  border-top: 1px dashed var(--crt-line);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.cal-remap label {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--crt-ink-dim);
+  font-size: 0.64rem;
+  letter-spacing: 0.2rem;
+}
+.cal-remap input[type="range"] {
+  flex: 1;
+  accent-color: var(--crt-amber);
+  height: 4px;
+}
+.cal-remap input[type="range"] + span {
+  width: 42px; text-align: right;
+  color: var(--crt-amber);
+}
+.cal-buttons { display: flex; gap: 10px; justify-content: center; }
+.cal-buttons button {
+  background: none;
+  border: 1px solid rgba(154,240,160,0.4);
+  color: var(--crt-ink);
+  font-family: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.2rem;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+.cal-buttons button:hover { box-shadow: 0 0 8px rgba(154,240,160,0.4); }
+.cal-buttons #cal-apply { border-color: rgba(255,184,75,0.55); color: var(--crt-amber); }

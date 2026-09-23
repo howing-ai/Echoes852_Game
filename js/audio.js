@@ -14,7 +14,12 @@
 //       - Footstep pulse      : so A knows B is moving
 //   * AnalyserNode taps the master bus so A's terminal can draw the
 //     live spectrum of what A is actually hearing.
+//   * Spatial calibration hook: _setSource() warps every source through
+//     the inverse perception map fitted by js/calibration.js, so what A
+//     hears matches where things truly are.
 // =====================================================================
+
+import { DEFAULT_CAL, remapPolar, loudnessAt } from './calibration.js';
 
 export class SpatialAudio {
   constructor() {
@@ -24,6 +29,14 @@ export class SpatialAudio {
     this._spectrum      = null;
 
     this.listener       = null;
+
+    // Listener pose cache (world x, world y→z, yaw) — needed by the
+    // spatial remap in _setSource().
+    this._lx = 0; this._lz = 0; this._lyaw = 0;
+
+    // Spatial calibration (affine polar remap + loudness envelope)
+    this.cal            = { ...DEFAULT_CAL };
+    this.calMode        = false;   // true while the calibration pad runs
 
     // Beacon (objective target)
     this.beaconOsc      = null;
@@ -134,6 +147,8 @@ export class SpatialAudio {
   // ------------------------------------------------------------------------
   _setListener(x, y, z, yaw) {
     if (!this.listener) return;
+    // cache pose for the spatial remap in _setSource()
+    this._lx = x; this._lz = z; this._lyaw = yaw;
     const fx = Math.cos(yaw);
     const fz = Math.sin(yaw);
     if (this.listener.positionX) {
@@ -152,7 +167,17 @@ export class SpatialAudio {
     }
   }
 
-  _setSource(panner, x, y) {
+  // Public: calibration system owns the listener while it runs.
+  setCalListener(x, y, yaw) {
+    this._setListener(x, 0, y, yaw);
+  }
+
+  // Public: install a calibration (affine polar remap + loudness envelope).
+  setCalibration(cal) {
+    this.cal = { ...DEFAULT_CAL, ...(cal || {}) };
+  }
+
+  _setSourceRaw(panner, x, y) {
     if (!panner) return;
     if (panner.positionX) {
       panner.positionX.value = x;
@@ -161,6 +186,26 @@ export class SpatialAudio {
     } else {
       panner.setPosition(x, 0, y);
     }
+  }
+
+  // ------------------------------------------------------------------------
+  // _setSource: place a WORLD source, but first warp it through the
+  // inverse perception map:
+  //     θ_render = (θ_true − bT) / kT      (relative to listener facing)
+  //     r_render = (r_true  − bR) / kR
+  // so the position the listener PERCEIVES equals the true world position.
+  // ------------------------------------------------------------------------
+  _setSource(panner, x, y) {
+    if (!panner) return;
+    const dx = x - this._lx;
+    const dz = y - this._lz;
+    const rTrue = Math.hypot(dx, dz);
+    const thTrue = Math.atan2(dz, dx) - this._lyaw;   // 0 = ahead, + = right
+
+    const m  = remapPolar(thTrue, rTrue, this.cal);
+    const ang = m.theta + this._lyaw;
+    this._setSourceRaw(panner, this._lx + Math.cos(ang) * m.r,
+                              this._lz + Math.sin(ang) * m.r);
   }
 
   // ------------------------------------------------------------------------
@@ -180,6 +225,14 @@ export class SpatialAudio {
   }) {
     if (!this.ctx) return;
 
+    // Calibration pad owns the acoustic space: duck the game mix out.
+    if (this.calMode) {
+      const t = this.ctx.currentTime;
+      this.beaconGain.gain.linearRampToValueAtTime(0, t + 0.1);
+      this.ghostGain.gain.linearRampToValueAtTime(0, t + 0.1);
+      return;
+    }
+
     // ---- Listener rigidly attached to Player B's camera ----
     this._setListener(playerX, 0, playerY, playerYaw);
 
@@ -187,7 +240,8 @@ export class SpatialAudio {
     const t = this.ctx.currentTime;
     this._setSource(this.beaconPanner, beaconX, beaconY);
     const beaconActive = beaconDist < 90;
-    this.beaconGain.gain.linearRampToValueAtTime(beaconActive ? 0.5 : 0, t + 0.1);
+    const beaconLoud = 0.5 * loudnessAt(beaconDist, this.cal);
+    this.beaconGain.gain.linearRampToValueAtTime(beaconActive ? beaconLoud : 0, t + 0.1);
     if (beaconActive) {
       // Closer -> higher pitch (urgency)
       const beaconNorm = Math.max(0, Math.min(1, 1 - beaconDist / 32));
@@ -197,7 +251,8 @@ export class SpatialAudio {
 
     // ---- Ghost: spatial hum; distance via panner, aggression via gain ----
     this._setSource(this.ghostPanner, ghostX, ghostY);
-    this.ghostGain.gain.linearRampToValueAtTime(0.16 + aggression * 0.42, t + 0.1);
+    const ghostLoud = (0.16 + aggression * 0.42) * loudnessAt(ghostDist, this.cal);
+    this.ghostGain.gain.linearRampToValueAtTime(ghostLoud, t + 0.1);
     this.ghostOsc.frequency.linearRampToValueAtTime(55 + aggression * 130, t + 0.1);
     this.ghostFilter.frequency.linearRampToValueAtTime(220 + aggression * 520, t + 0.1);
 
@@ -294,7 +349,7 @@ export class SpatialAudio {
 
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.7, t + 0.02);
+    g.gain.linearRampToValueAtTime(0.7 * loudnessAt(Math.hypot(x - this._lx, y - this._lz), this.cal), t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
 
     o.connect(g);
@@ -302,6 +357,44 @@ export class SpatialAudio {
     panner.connect(this.master);
     o.start(t);
     o.stop(t + 1.2);
+  }
+
+  // ------------------------------------------------------------------------
+  // CALIBRATION MODE: while the calibration pad runs, it owns the listener
+  // pose and fires raw (un-remapped) pings so we measure the listener's
+  // TRUE perception, not the corrected one.
+  // ------------------------------------------------------------------------
+  enterCalibration() { this.calMode = true; }
+  exitCalibration()  { this.calMode = false; }
+
+  playCalibrationPing(x, y) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+
+    const panner = this.ctx.createPanner();
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'exponential';
+    panner.refDistance = 1.0;
+    panner.maxDistance = 40;
+    panner.rolloffFactor = 0.35;   // keep every trial clearly audible
+
+    this._setSourceRaw(panner, x, y);   // RAW: no remap during measurement
+
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(720, t);
+    o.frequency.exponentialRampToValueAtTime(430, t + 0.3);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.8, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+
+    o.connect(g);
+    g.connect(panner);
+    panner.connect(this.master);
+    o.start(t);
+    o.stop(t + 1.0);
   }
 
   // ------------------------------------------------------------------------
