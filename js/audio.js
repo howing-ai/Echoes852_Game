@@ -19,7 +19,7 @@
 //     hears matches where things truly are.
 // =====================================================================
 
-import { DEFAULT_CAL, remapPolar, loudnessAt } from './calibration.js';
+import { DEFAULT_CAL, remapPolar, loudnessAt, wrap } from './calibration.js';
 
 export class SpatialAudio {
   constructor() {
@@ -68,7 +68,9 @@ export class SpatialAudio {
 
     this.ctx  = new AC();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.55;
+    // Master gain compensated upward to offset the perceived loudness loss
+    // introduced by the 500Hz atmosphere LPF (see _atmosFilter).
+    this.master.gain.value = 0.75;
     this.master.connect(this.ctx.destination);
 
     // ---- Spectrum tap for the sensor terminal ----
@@ -88,15 +90,21 @@ export class SpatialAudio {
     this.beaconGain = this.ctx.createGain();
     this.beaconGain.gain.value = 0;
 
+    this.beaconAtmos = this._atmosFilter();            // 500Hz shared atmosphere LPF
+
     this.beaconPanner = this.ctx.createPanner();
     this.beaconPanner.panningModel = 'HRTF';
+    // Gentle exponential attenuation: A needs enough falloff room to track
+    // a source before it goes silent. refDistance 1.5 (no proximity boost),
+    // rolloff 0.25 (very gradual), maxDistance 80 (silence beyond).
     this.beaconPanner.distanceModel = 'exponential';
-    this.beaconPanner.refDistance = 1.0;
-    this.beaconPanner.maxDistance = 40;
-    this.beaconPanner.rolloffFactor = 0.8;   // audible across most of the map
+    this.beaconPanner.refDistance = 1.5;
+    this.beaconPanner.maxDistance = 80;
+    this.beaconPanner.rolloffFactor = 0.25;
 
     this.beaconOsc.connect(this.beaconGain);
-    this.beaconGain.connect(this.beaconPanner);
+    this.beaconGain.connect(this.beaconAtmos);          // atmosphere tints BEFORE panner
+    this.beaconAtmos.connect(this.beaconPanner);
     this.beaconPanner.connect(this.master);
     this.beaconOsc.start();
 
@@ -105,6 +113,9 @@ export class SpatialAudio {
     this.ghostOsc.type = 'sawtooth';
     this.ghostOsc.frequency.value = 70;
 
+    // The ghost already has its OWN mood filter (220-740Hz LFO-modulated).
+    // The shared atmosphere LPF on top gives the SAME tonal character as
+    // every other source while keeping the ghost's breathing modulation.
     this.ghostFilter = this.ctx.createBiquadFilter();
     this.ghostFilter.type = 'lowpass';
     this.ghostFilter.frequency.value = 320;
@@ -113,12 +124,14 @@ export class SpatialAudio {
     this.ghostGain = this.ctx.createGain();
     this.ghostGain.gain.value = 0;
 
+    this.ghostAtmos = this._atmosFilter();             // shared atmosphere LPF
+
     this.ghostPanner = this.ctx.createPanner();
     this.ghostPanner.panningModel = 'HRTF';
     this.ghostPanner.distanceModel = 'exponential';
-    this.ghostPanner.refDistance = 1.0;
-    this.ghostPanner.maxDistance = 45;
-    this.ghostPanner.rolloffFactor = 0.8;
+    this.ghostPanner.refDistance = 1.5;
+    this.ghostPanner.maxDistance = 80;
+    this.ghostPanner.rolloffFactor = 0.25;
 
     // LFO gives the filter a breathing, living quality
     const lfo = this.ctx.createOscillator();
@@ -130,9 +143,24 @@ export class SpatialAudio {
 
     this.ghostOsc.connect(this.ghostFilter);
     this.ghostFilter.connect(this.ghostGain);
-    this.ghostGain.connect(this.ghostPanner);
+    this.ghostGain.connect(this.ghostAtmos);           // atmosphere tints before panner
+    this.ghostAtmos.connect(this.ghostPanner);
     this.ghostPanner.connect(this.master);
     this.ghostOsc.start();
+  }
+
+  // ---- Shared low-pass atmosphere filter (500Hz, Q=0.7) -----------------
+  // Inserted on every source chain — uniform tonal character.
+  // 500Hz cutoff (gentle resonance at Q=0.7) strips the harshness that
+  // raw oscillators generate in the 1–4kHz band, leaving a deeper, more
+  // atmospheric mix while preserving enough mid-band for HRTF panning
+  // cues (ITD still works well below 1.5kHz).
+  _atmosFilter() {
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 500;
+    f.Q.value = 0.7;
+    return f;
   }
 
   resume() {
@@ -147,11 +175,20 @@ export class SpatialAudio {
   // ------------------------------------------------------------------------
   _setListener(x, y, z, yaw) {
     if (!this.listener) return;
+    // Normalise yaw to (-π, π] BEFORE trig. Player B's camera accumulates
+    // yaw unboundedly over a session; cos/sin of large arguments lose
+    // precision in the low-order bits (e.g. sin(100π) ≈ 0 but rounds to
+    // ±10⁻¹⁵). The normalised angle produces the SAME unit forward
+    // vector as the raw one, but without the floating-point drift.
+    const yN = wrap(yaw);
     // cache pose for the spatial remap in _setSource()
-    this._lx = x; this._lz = z; this._lyaw = yaw;
-    const fx = Math.cos(yaw);
-    const fz = Math.sin(yaw);
+    this._lx = x; this._lz = z; this._lyaw = yN;
+    const fx = Math.cos(yN);
+    const fz = Math.sin(yN);
     if (this.listener.positionX) {
+      // Direct .value writes (no ramp) → HRTF panning responds IMMEDIATELY
+      // to camera rotation, frame-perfect. AudioParam.linearRampToValue
+      // would cause audible lag and lateral misalignment.
       this.listener.positionX.value = x;
       this.listener.positionY.value = y;
       this.listener.positionZ.value = z;
@@ -162,6 +199,8 @@ export class SpatialAudio {
       this.listener.upY.value = 1;
       this.listener.upZ.value = 0;
     } else {
+      // Legacy AudioListener path (older browsers) — setPosition is
+      // instantaneous; setOrientation is too (no ramp overload).
       this.listener.setPosition(x, y, z);
       this.listener.setOrientation(fx, 0, fz, 0, 1, 0);
     }
@@ -305,7 +344,8 @@ export class SpatialAudio {
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.35, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-    o.connect(g); g.connect(this.master);
+    const atmos = this._atmosFilter();           // uniform atmosphere tint
+    o.connect(g); g.connect(atmos); atmos.connect(this.master);
     o.start(t); o.stop(t + 0.6);
   }
 
@@ -320,7 +360,8 @@ export class SpatialAudio {
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.6, t + 0.1);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
-    o.connect(g); g.connect(this.master);
+    const atmos = this._atmosFilter();
+    o.connect(g); g.connect(atmos); atmos.connect(this.master);
     o.start(t); o.stop(t + 1.5);
   }
 
@@ -335,10 +376,13 @@ export class SpatialAudio {
 
     const panner = this.ctx.createPanner();
     panner.panningModel = 'HRTF';
+    // Match the gentle attenuation profile of the world sources so a lure
+    // ping is audible at all game-relevant distances; rolloff=0.45 (still
+    // louder than continuous sources, but no abrupt cliff at maxDistance).
     panner.distanceModel = 'exponential';
-    panner.refDistance = 1.0;
-    panner.maxDistance = 60;
-    panner.rolloffFactor = 0.45;   // deliberately LOUD — carries across the map
+    panner.refDistance = 1.5;
+    panner.maxDistance = 80;
+    panner.rolloffFactor = 0.45;
 
     this._setSource(panner, x, y);
 
@@ -352,8 +396,10 @@ export class SpatialAudio {
     g.gain.linearRampToValueAtTime(0.7 * loudnessAt(Math.hypot(x - this._lx, y - this._lz), this.cal), t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
 
+    const atmos = this._atmosFilter();             // uniform atmosphere tint
     o.connect(g);
-    g.connect(panner);
+    g.connect(atmos);
+    atmos.connect(panner);
     panner.connect(this.master);
     o.start(t);
     o.stop(t + 1.2);
@@ -374,11 +420,11 @@ export class SpatialAudio {
     const panner = this.ctx.createPanner();
     panner.panningModel = 'HRTF';
     panner.distanceModel = 'exponential';
-    panner.refDistance = 1.0;
-    panner.maxDistance = 40;
-    panner.rolloffFactor = 0.35;   // keep every trial clearly audible
+    panner.refDistance = 1.5;
+    panner.maxDistance = 80;
+    panner.rolloffFactor = 0.35;            // keep every trial clearly audible
 
-    this._setSourceRaw(panner, x, y);   // RAW: no remap during measurement
+    this._setSourceRaw(panner, x, y);       // RAW: no remap during measurement
 
     const o = this.ctx.createOscillator();
     o.type = 'sine';
@@ -390,8 +436,10 @@ export class SpatialAudio {
     g.gain.linearRampToValueAtTime(0.8, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
 
+    const atmos = this._atmosFilter();
     o.connect(g);
-    g.connect(panner);
+    g.connect(atmos);
+    atmos.connect(panner);
     panner.connect(this.master);
     o.start(t);
     o.stop(t + 1.0);
@@ -409,7 +457,8 @@ export class SpatialAudio {
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.32 * intensity, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-    o.connect(g); g.connect(this.master);
+    const atmos = this._atmosFilter();
+    o.connect(g); g.connect(atmos); atmos.connect(this.master);
     o.start(t); o.stop(t + 0.25);
   }
 
@@ -423,7 +472,8 @@ export class SpatialAudio {
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.12 + intensity * 0.05, t + 0.01);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
-    o.connect(g); g.connect(this.master);
+    const atmos = this._atmosFilter();
+    o.connect(g); g.connect(atmos); atmos.connect(this.master);
     o.start(t); o.stop(t + 0.15);
   }
 }
