@@ -643,3 +643,40 @@ html, body {
 }
 .cal-buttons button:hover { box-shadow: 0 0 8px rgba(154,240,160,0.4); }
 .cal-buttons #cal-apply { border-color: rgba(255,184,75,0.55); color: var(--crt-amber); }
+
+/* ===== Memory echo whisper subtitle (Player A) ==========================
+   The residue whisper has no position, so neither does its text: a single
+   centered line at the bottom of the sensor terminal. =================== */
+.echo-subtitle {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  max-width: 78%;
+  padding: 0.55rem 1.15rem;
+  background: rgba(2, 8, 5, 0.85);
+  border: 1px solid rgba(154, 240, 160, 0.35);
+  font-family: "Courier New", monospace;
+  font-style: italic;
+  font-size: 0.85rem;
+  letter-spacing: 0.06rem;
+  line-height: 1.55;
+  text-align: center;
+  color: var(--crt-ink);
+  text-shadow: 0 0 6px rgba(154, 240, 160, 0.55);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  z-index: 60;
+}
+.echo-subtitle.visible { opacity: 1; }
+.echo-subtitle.hidden  { display: none; }
+.echo-subtitle .es-tag {
+  display: block;
+  font-style: normal;
+  font-size: 0.62rem;
+  letter-spacing: 0.22rem;
+  color: var(--crt-amber);
+  opacity: 0.75;
+  margin-bottom: 0.35rem;
+}

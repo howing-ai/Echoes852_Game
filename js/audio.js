@@ -51,6 +51,14 @@ export class SpatialAudio {
     this.ghostGain      = null;
     this.ghostPanner    = null;
 
+    // Ghost decoy ("the false ear") — mimics a beacon from a false bearing
+    this.decoyOsc       = null;   // pure sine carrier (mimics the beacon)
+    this.decoyDirt      = null;   // faint detuned sawtooth — THE TELL
+    this.decoyDirtGain  = null;
+    this.decoyGain      = null;
+    this.decoyAtmos     = null;
+    this.decoyPanner    = null;
+
     // Heartbeat
     this.heartbeatTimer  = 0;
     this.heartbeatPeriod = 1.5;
@@ -147,6 +155,40 @@ export class SpatialAudio {
     this.ghostAtmos.connect(this.ghostPanner);
     this.ghostPanner.connect(this.master);
     this.ghostOsc.start();
+
+    // ===== Ghost decoy — the false ear =====
+    // Pure sine carrier so it initially reads as "a beacon". A faint
+    // detuned sawtooth rides underneath: real beacons are pure sines, so
+    // the trace of harmonics is the spectral tell for a sharp listener.
+    this.decoyOsc = this.ctx.createOscillator();
+    this.decoyOsc.type = 'sine';
+    this.decoyOsc.frequency.value = 440;
+
+    this.decoyDirt = this.ctx.createOscillator();
+    this.decoyDirt.type = 'sawtooth';
+    this.decoyDirt.frequency.value = 443;
+    this.decoyDirtGain = this.ctx.createGain();
+    this.decoyDirtGain.gain.value = 0.05;
+
+    this.decoyGain = this.ctx.createGain();
+    this.decoyGain.gain.value = 0;
+
+    this.decoyAtmos  = this._atmosFilter();            // same tint as everything
+    this.decoyPanner = this.ctx.createPanner();
+    this.decoyPanner.panningModel = 'HRTF';
+    this.decoyPanner.distanceModel = 'exponential';
+    this.decoyPanner.refDistance = 1.5;
+    this.decoyPanner.maxDistance = 80;
+    this.decoyPanner.rolloffFactor = 0.25;
+
+    this.decoyOsc.connect(this.decoyGain);
+    this.decoyDirt.connect(this.decoyDirtGain);
+    this.decoyDirtGain.connect(this.decoyGain);
+    this.decoyGain.connect(this.decoyAtmos);
+    this.decoyAtmos.connect(this.decoyPanner);
+    this.decoyPanner.connect(this.master);
+    this.decoyOsc.start();
+    this.decoyDirt.start();
   }
 
   // ---- Shared low-pass atmosphere filter (500Hz, Q=0.7) -----------------
@@ -257,6 +299,7 @@ export class SpatialAudio {
     playerX, playerY, playerYaw,        // listener = Player B's head
     ghostX, ghostY, ghostDist,          // ghost source position
     beaconX, beaconY, beaconDist,       // active beacon source position
+    decoy,                              // { active, x, y, freq } | undefined — ghost mimic
     aggression,                         // 0..1 ghost aggression
     tension,                            // 0..1 overall tension
     isMoving,                           // Player B moving?
@@ -269,6 +312,7 @@ export class SpatialAudio {
       const t = this.ctx.currentTime;
       this.beaconGain.gain.linearRampToValueAtTime(0, t + 0.1);
       this.ghostGain.gain.linearRampToValueAtTime(0, t + 0.1);
+      this.decoyGain.gain.linearRampToValueAtTime(0, t + 0.1);
       return;
     }
 
@@ -294,6 +338,9 @@ export class SpatialAudio {
     this.ghostGain.gain.linearRampToValueAtTime(ghostLoud, t + 0.1);
     this.ghostOsc.frequency.linearRampToValueAtTime(55 + aggression * 130, t + 0.1);
     this.ghostFilter.frequency.linearRampToValueAtTime(220 + aggression * 520, t + 0.1);
+
+    // ---- Ghost decoy: the false ear ----
+    this._updateDecoy(decoy, t);
 
     // ---- Heartbeat (A feels B's pulse) ----
     this.heartbeatPeriod = Math.max(0.32, 1.6 - tension * 1.2);
@@ -328,6 +375,74 @@ export class SpatialAudio {
   getHeartbeatPulse() {
     // 1 right after the beat, decaying to 0
     return Math.max(0, 1 - this.heartbeatPhase * 2.2);
+  }
+
+  // ------------------------------------------------------------------------
+  // Ghost decoy renderer. The director (js/decoy.js) owns the decisions;
+  // this only paints sound. Key detail: the frequency is set with a flat
+  // setValueAtTime every frame — the REAL beacon ramps its pitch upward
+  // as B closes in, the mimic NEVER MOVES. That is the audible tell.
+  // ------------------------------------------------------------------------
+  _updateDecoy(d, t) {
+    if (!this.decoyGain) return;
+    if (d && d.active) {
+      this._setSource(this.decoyPanner, d.x, d.y);
+      this.decoyOsc.frequency.setValueAtTime(d.freq, t);
+      this.decoyDirt.frequency.setValueAtTime(d.freq * 1.008, t);
+      const dist = Math.hypot(d.x - this._lx, d.y - this._lz);
+      this.decoyGain.gain.linearRampToValueAtTime(0.40 * loudnessAt(dist, this.cal), t + 0.12);
+    } else {
+      this.decoyGain.gain.linearRampToValueAtTime(0, t + 0.25);
+    }
+  }
+
+  // ------------------------------------------------------------------------
+  // MEMORY ECHO WHISPER — the residue's voice.
+  // Deliberately NOT spatialised: no PannerNode, no atmosphere filter.
+  // Bandpassed noise gated in speech-like syllable bursts, routed straight
+  // to both ears — it comes from inside the listener's own head. Every
+  // other sound in the game has a position; this one doesn't.
+  // ------------------------------------------------------------------------
+  playWhisper() {
+    if (!this.ctx) return;
+    const t   = this.ctx.currentTime;
+    const dur = 3.4;
+
+    // 1. Second-and-a-half of white noise shaped into "breath"
+    const len  = Math.ceil(this.ctx.sampleRate * dur);
+    const buf  = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+
+    // 2. Formant band: speech-intelligible frequencies, but no words
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1350;
+    bp.Q.value = 1.4;
+
+    // 3. Syllable cadence: bursts of 120-240ms with short gaps
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    let tt = t + 0.15;
+    while (tt < t + dur - 0.35) {
+      const on  = 0.12 + Math.random() * 0.12;
+      const amp = 0.16 + Math.random() * 0.14;
+      g.gain.linearRampToValueAtTime(amp, tt + 0.03);
+      g.gain.setValueAtTime(amp, tt + on);
+      g.gain.linearRampToValueAtTime(0.015, tt + on + 0.05);
+      tt += on + 0.06 + Math.random() * 0.10;
+    }
+    g.gain.linearRampToValueAtTime(0, t + dur);
+
+    // No panner, no atmosphere — straight into the skull.
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.master);
+    src.start(t);
+    src.stop(t + dur + 0.1);
   }
 
   // ------------------------------------------------------------------------

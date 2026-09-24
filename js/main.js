@@ -10,6 +10,8 @@ import { PlayerB, PlayerA } from './player.js';
 import { Ghost, GHOST_STATE } from './ghost.js';
 import { SpatialAudio }       from './audio.js';
 import { CalibrationSession, loadCal, saveCal, clearCal, CAL } from './calibration.js';
+import { GhostDecoyDirector } from './decoy.js';
+import { MemoryEchoSystem }   from './memoryEchoes.js';
 
 // -------------------------------------------------------------------------
 // GAME MAP — 24x24 grid, 1 = wall, 0 = open
@@ -151,6 +153,8 @@ const playerB     = new PlayerB(map, {
 const playerA     = new PlayerA(map, document.getElementById('map-canvas'));
 const ghost       = new Ghost(map, map.ghostSpawn);
 const audio       = new SpatialAudio();
+const decoy       = new GhostDecoyDirector(map);   // decides when/where the mimic sings
+const echoes      = new MemoryEchoSystem(map);     // deterministic residue whispers
 
 document.getElementById('role-a-btn').addEventListener('click', () => selectRole('A'));
 document.getElementById('role-b-btn').addEventListener('click', () => selectRole('B'));
@@ -282,6 +286,15 @@ function onChannelMessage(msg) {
       }
       break;
     }
+    case 'b-echo': {
+      // A residue stirred near B. Only Player A hears the whisper —
+      // it arrives from inside A's own head (no position, no panner).
+      if (game.role === 'A' && Number.isInteger(msg.idx)) {
+        audio.playWhisper?.();
+        showEchoSubtitle(msg.idx);
+      }
+      break;
+    }
   }
 }
 
@@ -384,6 +397,34 @@ playerA.setActiveBeaconIdx = function (idx) {
     if (game.phase === STATE.PLAY) triggerLure(idx);
   }
 };
+
+// =========================================================================
+// MEMORY ECHO SUBTITLE (Player A)
+//   The whisper is unintelligible by design; the intel arrives as text on
+//   A's sensor terminal. The fragment plays ONCE per run — A must relay it
+//   to B by voice, which is the whole point of the information asymmetry.
+// =========================================================================
+const echoSubtitle  = document.getElementById('echo-subtitle');
+let echoSubTimer    = null;
+
+function showEchoSubtitle(idx) {
+  if (!echoSubtitle) return;
+  const frag = echoes.getFragment(idx);
+  echoSubtitle.innerHTML =
+    `<span class="es-tag">&#9670; SIGNAL FRAGMENT ${idx + 1}/${echoes.total} &mdash; plays once</span>` +
+    frag.text;
+  echoSubtitle.classList.remove('hidden');
+  requestAnimationFrame(() => echoSubtitle.classList.add('visible'));
+  clearTimeout(echoSubTimer);
+  echoSubTimer = setTimeout(hideEchoSubtitle, 7000);
+}
+
+function hideEchoSubtitle() {
+  if (!echoSubtitle) return;
+  clearTimeout(echoSubTimer);
+  echoSubtitle.classList.remove('visible');
+  setTimeout(() => echoSubtitle.classList.add('hidden'), 600);
+}
 
 // =========================================================================
 // SPATIAL CALIBRATION & REMAPPING (Player A)
@@ -572,6 +613,11 @@ function update(dt) {
     playerB.update(dt);
     ghost.update(dt, playerB.x, playerB.y);
 
+    // Memory echoes: B walks past residues unaware; each triggers ONCE
+    // and is broadcast to A (who hears the whisper + reads the fragment).
+    const echoEvt = echoes.update(dt, playerB.x, playerB.y);
+    if (echoEvt) channel?.postMessage({ type: 'b-echo', idx: echoEvt.idx });
+
     // Mirror to render state
     game.playerX   = playerB.x;
     game.playerY   = playerB.y;
@@ -640,6 +686,18 @@ function update(dt) {
     // Audio listener rides Player B's head: position + camera yaw.
     // When B turns in the 3D world, panning shifts in A's headphones.
     // Sound sources (beacon + ghost) live at their true world positions.
+    //
+    // The decoy director (false ear) watches the synced ghost state and
+    // decides whether the mimic sings this frame. It runs HERE, on A's
+    // tab, because only A has ears — the mimic is a lie told to A alone.
+    decoy.update(dt, {
+      ghostState: ghost.state,
+      ghostX:     ghost.x,
+      ghostY:     ghost.y,
+      listenerX:  playerB.x,
+      listenerY:  playerB.y,
+    });
+
     audio.update({
       playerX:    playerB.x,
       playerY:    playerB.y,
@@ -650,6 +708,7 @@ function update(dt) {
       beaconX,
       beaconY,
       beaconDist,
+      decoy:      decoy.snapshot,
       aggression: ghost.aggression,
       tension:    game.tension,
       isMoving:   playerB.isMoving,
@@ -851,9 +910,15 @@ function restart() {
   ghost.state = 'wander';
   playerA.beacons.forEach(b => b.collected = false);
   playerA.activeBeaconIdx = 0;
+  decoy.reset();        // false ear: back to the grace period
+  echoes.reset();       // residues may whisper again this run
+  hideEchoSubtitle();
   game.phase = STATE.PLAY;
   hideEndBanner();
 }
+
+// Testing / demo handle — also the seam the Unity migration demos drive.
+window.__echoes = { game, map, playerA, playerB, ghost, audio, decoy, echoes };
 
 // -------------------------------------------------------------------------
 // RENDER
