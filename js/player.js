@@ -52,6 +52,7 @@ export class PlayerB {
     this.keys          = {};
     this.pointerLocked = false;
     this.isMoving      = false;
+    this.isSprinting   = false;   // SHIFT held while actually moving
 
     this._bind();
     this._renderCaptureOverlay();
@@ -180,6 +181,7 @@ export class PlayerB {
     if (Math.hypot(this.velX, this.velY) < 0.01) { this.velX = 0; this.velY = 0; }
 
     this.isMoving = Math.hypot(this.velX, this.velY) > 0.05;
+    this.isSprinting = sprint && this.isMoving;   // feeds Rain's breathing loop
 
     // ---- Sub-stepped, axis-separated collision ----
     // Split the frame's travel into steps no larger than the collision
@@ -206,25 +208,32 @@ export class PlayerB {
   }
 
   // -------------------------------------------------------------------
-  // First-person raycasting renderer
+  // First-person raycasting renderer — LOCATION-THEMED.
+  // The active map's palette (js/main.js MAP_DEFS) paints sky, floor and
+  // walls, so each location has a recognisable visual identity: green neon
+  // alleys, amber lantern streets, cyan container yard.
   // -------------------------------------------------------------------
   render() {
     const canvas = this.canvas;
     const ctx    = this.ctx;
     const w = canvas.width  = canvas.clientWidth;
     const h = canvas.height = canvas.clientHeight;
+    const pal = this.map.palette || {
+      wallNear: [60, 220, 120], wallFar: [10, 70, 40], edge: '154,240,160',
+      skyTop: '#02050a', skyBot: '#0c1418', floorTop: '#0a0606', floorBot: '#1c0d04',
+    };
 
     // ---- Sky / Ceiling ----
     const sky = ctx.createLinearGradient(0, 0, 0, h / 2);
-    sky.addColorStop(0, '#02050a');
-    sky.addColorStop(1, '#0c1418');
+    sky.addColorStop(0, pal.skyTop);
+    sky.addColorStop(1, pal.skyBot);
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, h / 2);
 
     // ---- Floor ----
     const floor = ctx.createLinearGradient(0, h / 2, 0, h);
-    floor.addColorStop(0, '#0a0606');
-    floor.addColorStop(1, '#1c0d04');
+    floor.addColorStop(0, pal.floorTop);
+    floor.addColorStop(1, pal.floorBot);
     ctx.fillStyle = floor;
     ctx.fillRect(0, h / 2, w, h / 2);
 
@@ -232,6 +241,8 @@ export class PlayerB {
     const numRays = Math.min(w, 280);
     const colW    = w / numRays;
     const halfFov = this.fov / 2;
+    const [nr, ng, nb] = pal.wallNear;
+    const [fr, fg, fb] = pal.wallFar;
 
     for (let i = 0; i < numRays; i++) {
       const cameraX = 2 * (i / numRays) - 1;
@@ -243,23 +254,34 @@ export class PlayerB {
       const lineH    = Math.min(h, h / Math.max(0.05, perpDist));
       const top      = (h - lineH) / 2 - this.pitch * lineH * 0.25;
 
+      // Depth fog: near = palette's signature glow, far = its night tone
       const t = Math.min(1, perpDist / 14);
-      const r = Math.floor(10 + (1 - t) * 50);
-      const g = Math.floor(70 + (1 - t) * 150);
-      const b = Math.floor(40 + (1 - t) * 70);
+      const r = Math.floor(fr + (1 - t) * (nr - fr));
+      const g = Math.floor(fg + (1 - t) * (ng - fg));
+      const b = Math.floor(fb + (1 - t) * (nb - fb));
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(i * colW, top, Math.ceil(colW) + 1, lineH);
 
-      ctx.strokeStyle = `rgba(154,240,160,${0.30 + (1 - t) * 0.45})`;
+      // Vertical edge lines — the wireframe signature, in-palette
+      ctx.strokeStyle = `rgba(${pal.edge},${0.30 + (1 - t) * 0.45})`;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(i * colW, top);
       ctx.lineTo(i * colW, top + lineH);
       ctx.stroke();
+
+      // Top edge highlight: reads as a lit cornice / neon tube
+      if (perpDist < 10) {
+        ctx.strokeStyle = `rgba(${pal.edge},${(1 - t) * 0.5})`;
+        ctx.beginPath();
+        ctx.moveTo(i * colW, top);
+        ctx.lineTo((i + 1) * colW, top);
+        ctx.stroke();
+      }
     }
 
-    // ---- Floor wireframe scanlines for atmosphere ----
-    ctx.strokeStyle = 'rgba(154,240,160,0.05)';
+    // ---- Floor wireframe scanlines for atmosphere (in-palette) ----
+    ctx.strokeStyle = `rgba(${pal.edge},0.05)`;
     ctx.lineWidth = 1;
     for (let y = h / 2; y < h; y += 6) {
       ctx.beginPath();
@@ -385,7 +407,7 @@ export class PlayerA {
     }
 
     // Body-relative labels: F(ront), R(ight), B(ack), L(eft)
-    ctx.font = '11px "Courier New", monospace';
+    ctx.font = '12px "Share Tech Mono", "Consolas", monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(154,240,160,0.55)';
     ctx.fillText('F', cx, cy - R - 10);
@@ -422,7 +444,7 @@ export class PlayerA {
 
       // channel numeral — the only number on the dial
       ctx.fillStyle = b.active ? 'rgba(255,184,75,0.95)' : 'rgba(255,184,75,0.30)';
-      ctx.font = b.active ? 'bold 12px "Courier New", monospace' : '10px "Courier New", monospace';
+      ctx.font = b.active ? 'bold 13px "Share Tech Mono", "Consolas", monospace' : '11px "Share Tech Mono", "Consolas", monospace';
       ctx.fillText(String(i + 1), bx, by - 11);
 
       if (b.active) {
@@ -463,11 +485,11 @@ export class PlayerA {
     if (activeB) {
       const i = state.beacons.indexOf(activeB);
       ctx.fillStyle = 'rgba(255,184,75,0.9)';
-      ctx.font = 'bold 16px "Courier New", monospace';
+      ctx.font = 'bold 17px "Share Tech Mono", "Consolas", monospace';
       ctx.fillText(`ECHO ${i + 1}`, cx, cy - 4);
     } else {
       ctx.fillStyle = 'rgba(154,240,160,0.55)';
-      ctx.font = 'bold 14px "Courier New", monospace';
+      ctx.font = 'bold 15px "Share Tech Mono", "Consolas", monospace';
       ctx.fillText('SIGNAL CLEAR', cx, cy - 4);
     }
 
@@ -491,7 +513,7 @@ export class PlayerA {
       }
 
       ctx.fillStyle = 'rgba(154,240,160,0.35)';
-      ctx.font = '9px "Courier New", monospace';
+      ctx.font = '10px "Share Tech Mono", "Consolas", monospace';
       ctx.fillText('· SIGNAL ·', cx, sy + 12);
     }
   }

@@ -12,17 +12,58 @@ import { SpatialAudio }       from './audio.js';
 import { CalibrationSession, loadCal, saveCal, clearCal, CAL } from './calibration.js';
 import { GhostDecoyDirector } from './decoy.js';
 import { MemoryEchoSystem }   from './memoryEchoes.js';
+import { NetLink, NET_MODE, generateRoomCode, defaultServerUrl } from './net.js';
+import { AudioAssetBank } from './audioAssets.js';
+import { AmbientMusic }    from './music.js';
 
 // -------------------------------------------------------------------------
-// GAME MAP — 24x24 grid, 1 = wall, 0 = open
-// Loose homage to Hong Kong alleys: tight corridors, plazas, dead ends.
+// MAP ARCHETYPES — each location is structurally AND chromatically unique.
+//   1. SHAM SHUI PO   : tight irregular neon alleys (the original maze)
+//   2. TEMPLE STREET  : lantern-lit market lanes — long horizontal streets
+//                       cut by stall walls with staggered gaps
+//   3. KWAI CHUNG     : container freight yard — a regular 2x2 block grid
+//                       with long, exposed sightlines
+// The palette drives Player B's first-person renderer (js/player.js), the
+// title-screen preview cards and the HUD location chips, so a location is
+// recognisable at a glance from any of them.
+// Unity mapping: MAP_DEFS[] -> LocationDefinition ScriptableObjects.
 // -------------------------------------------------------------------------
-class GameMap {
-  constructor() {
-    this.width  = 24;
-    this.height = 24;
+function genTempleGrid() {
+  const W = 24, H = 24;
+  const g = Array.from({ length: H }, () => Array(W).fill(0));
+  for (let i = 0; i < W; i++) { g[0][i] = 1; g[H - 1][i] = 1; }
+  for (let y = 0; y < H; y++) { g[y][0] = 1; g[y][W - 1] = 1; }
+  // Full-width stall rows with staggered 2-wide gaps = market streets
+  const lanes = { 5: [3, 4, 14, 15, 20], 10: [1, 2, 8, 9, 17, 18], 15: [5, 6, 12, 13, 21], 19: [3, 4, 16, 17] };
+  for (const [y, gaps] of Object.entries(lanes)) {
+    for (let x = 1; x < W - 1; x++) if (!gaps.includes(x)) g[y][x] = 1;
+  }
+  // Vertical stubs break the sightlines down each street
+  const stubs = [[6, 1], [12, 2], [17, 6], [6, 7], [7, 11], [16, 11], [9, 16], [14, 16], [6, 21], [18, 21]];
+  for (const [x, y] of stubs) g[y][x] = 1;
+  return g.map(r => r.join(''));
+}
 
-    const raw = [
+function genKwaiGrid() {
+  const W = 24, H = 24;
+  const g = Array.from({ length: H }, () => Array(W).fill(0));
+  for (let i = 0; i < W; i++) { g[0][i] = 1; g[H - 1][i] = 1; }
+  for (let y = 0; y < H; y++) { g[y][0] = 1; g[y][W - 1] = 1; }
+  // Container stacks: 2x2 blocks on a 5-cell pitch -> 3-wide lanes, all connected
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      if ((y % 5 === 1 || y % 5 === 2) && (x % 5 === 1 || x % 5 === 2)) g[y][x] = 1;
+    }
+  }
+  return g.map(r => r.join(''));
+}
+
+const MAP_DEFS = [
+  {
+    id: 'shamshuipo',
+    name: 'SHAM SHUI PO ALLEYS',
+    blurb: 'tight neon alleys · dead ends',
+    grid: [
       "111111111111111111111111",
       "100000000000000000000001",
       "101111101111101111110001",
@@ -47,21 +88,66 @@ class GameMap {
       "100010001000000000000001",
       "100000000000000000000001",
       "111111111111111111111111",
-    ];
+    ],
+    playerSpawn: { x: 1.5, y: 1.5 },
+    ghostSpawn:  { x: 22.5, y: 22.5 },
+    beacons: [ { x: 6, y: 6 }, { x: 17, y: 3 }, { x: 3, y: 14 }, { x: 18, y: 13 }, { x: 11, y: 21 } ],
+    palette: {
+      wallNear: [60, 220, 120], wallFar: [10, 70, 40],
+      edge: '154,240,160', accent: '#9af0a0',
+      skyTop: '#02050a', skyBot: '#0c1418',
+      floorTop: '#0a0606', floorBot: '#1c0d04',
+    },
+  },
+  {
+    id: 'temple',
+    name: 'TEMPLE STREET MARKET',
+    blurb: 'lantern lanes · long streets',
+    grid: genTempleGrid(),
+    playerSpawn: { x: 1.5, y: 1.5 },
+    ghostSpawn:  { x: 22.5, y: 22.5 },
+    beacons: [ { x: 3, y: 3 }, { x: 20, y: 3 }, { x: 11, y: 12 }, { x: 3, y: 17 }, { x: 20, y: 17 } ],
+    palette: {
+      wallNear: [190, 120, 50], wallFar: [34, 16, 8],
+      edge: '255,184,75', accent: '#ffb84b',
+      skyTop: '#080405', skyBot: '#200f08',
+      floorTop: '#140804', floorBot: '#2c1206',
+    },
+  },
+  {
+    id: 'kwai',
+    name: 'KWAI CHUNG FREIGHT YARD',
+    blurb: 'container grid · open sightlines',
+    grid: genKwaiGrid(),
+    playerSpawn: { x: 3.5, y: 3.5 },
+    ghostSpawn:  { x: 20.5, y: 20.5 },
+    beacons: [ { x: 4, y: 4 }, { x: 9, y: 13 }, { x: 13, y: 4 }, { x: 19, y: 9 }, { x: 4, y: 19 } ],
+    palette: {
+      wallNear: [70, 180, 200], wallFar: [8, 22, 30],
+      edge: '120,220,240', accent: '#7adcf0',
+      skyTop: '#020608', skyBot: '#0a1620',
+      floorTop: '#050a0d', floorBot: '#101c24',
+    },
+  },
+];
 
-    this.grid = raw.map(row => row.split('').map(Number));
+// -------------------------------------------------------------------------
+// GAME MAP — grid + walls + raycast, driven by a MAP_DEFS entry
+// -------------------------------------------------------------------------
+class GameMap {
+  constructor(def) {
+    const d = def || MAP_DEFS[0];
+    this.def     = d;
+    this.name    = d.name;
+    this.palette = d.palette;
+    this.width   = 24;
+    this.height  = 24;
 
-    this.playerSpawn = { x: 1.5, y: 1.5 };
-    this.ghostSpawn  = { x: 22.5, y: 22.5 };
+    this.grid = d.grid.map(row => row.split('').map(Number));
 
-    // Beacons Player B must absorb (mirrored into the map + audio)
-    this.beacons = [
-      { x:  6, y:  6 },   // B1
-      { x: 17, y:  3 },   // B2
-      { x:  3, y: 14 },   // B3
-      { x: 18, y: 13 },   // B4
-      { x: 11, y: 21 },   // B5
-    ];
+    this.playerSpawn = { ...d.playerSpawn };
+    this.ghostSpawn  = { ...d.ghostSpawn };
+    this.beacons     = d.beacons.map(b => ({ ...b }));
 
     this._buildWalls();
   }
@@ -144,20 +230,176 @@ const aggrVal      = document.getElementById('aggression-val');
 const beaconBar    = document.getElementById('beacon-bar');
 const beaconVal    = document.getElementById('beacon-val');
 
-const map         = new GameMap();
-const playerB     = new PlayerB(map, {
+let map      = new GameMap(MAP_DEFS[0]);
+const playerB = new PlayerB(map, {
   canvas:         document.getElementById('fp-canvas'),
   captureOverlay: captureOverlay,
   syncStatus:     syncStatus,
 });
-const playerA     = new PlayerA(map, document.getElementById('map-canvas'));
-const ghost       = new Ghost(map, map.ghostSpawn);
+let playerA = new PlayerA(map, document.getElementById('map-canvas'));
+let ghost   = new Ghost(map, map.ghostSpawn);
 const audio       = new SpatialAudio();
-const decoy       = new GhostDecoyDirector(map);   // decides when/where the mimic sings
-const echoes      = new MemoryEchoSystem(map);     // deterministic residue whispers
+let decoy   = new GhostDecoyDirector(map);   // decides when/where the mimic sings
+let echoes  = new MemoryEchoSystem(map);     // deterministic residue whispers
 
-document.getElementById('role-a-btn').addEventListener('click', () => selectRole('A'));
-document.getElementById('role-b-btn').addEventListener('click', () => selectRole('B'));
+// -------------------------------------------------------------------------
+// MAP SWITCHING — Player B (the world authority) owns the ground; Player A
+// mirrors it via the 'b-map' message. applyMap() rebuilds every map-bound
+// system; playerB is re-pointed instead of rebuilt (it owns input bindings).
+// -------------------------------------------------------------------------
+function applyMap(idx) {
+  if (!Number.isInteger(idx) || idx < 0 || idx >= MAP_DEFS.length) return;
+
+  const chipA = document.getElementById('loc-name-a');
+  const chipB = document.getElementById('loc-name-b');
+  if (chipA) chipA.textContent = MAP_DEFS[idx].name;
+  if (chipB) chipB.textContent = MAP_DEFS[idx].name;
+
+  if (map && map.def === MAP_DEFS[idx]) {   // already on this map: chips only
+    game.mapIdx = idx;
+    return;
+  }
+
+  map      = new GameMap(MAP_DEFS[idx]);
+  game.mapIdx = idx;
+
+  playerB.map = map;
+  playerB.x = map.playerSpawn.x; playerB.y = map.playerSpawn.y;
+  playerB.yaw = 0; playerB.velX = 0; playerB.velY = 0;
+
+  ghost   = new Ghost(map, map.ghostSpawn);
+  playerA = new PlayerA(map, document.getElementById('map-canvas'));
+  decoy   = new GhostDecoyDirector(map);
+  echoes  = new MemoryEchoSystem(map);
+  hookPlayerA();
+
+  window.__echoes = { game, map, playerA, playerB, ghost, audio, decoy, echoes, net, music: () => music };
+}
+
+function hookPlayerA() {
+  const orig = playerA.setActiveBeaconIdx?.bind(playerA);
+  playerA.setActiveBeaconIdx = function (idx) {
+    if (orig) orig(idx);
+    else this.activeBeaconIdx = idx;
+    if (game.role === 'A') {
+      net.send({ type: 'a-target', idx });
+      if (game.phase === STATE.PLAY) triggerLure(idx);
+    }
+  };
+}
+hookPlayerA();
+
+// -------------------------------------------------------------------------
+// TITLE SCREEN — location cards with live top-down previews.
+// Each card is painted in its map's palette so the three locations are
+// distinguishable before a single step is taken.
+// -------------------------------------------------------------------------
+const mapCardsWrap = document.getElementById('map-cards');
+let selectedMapIdx = 0;
+
+function renderMapCards() {
+  if (!mapCardsWrap) return;
+  mapCardsWrap.innerHTML = '';
+  MAP_DEFS.forEach((def, i) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'map-card' + (i === selectedMapIdx ? ' selected' : '');
+    card.innerHTML =
+      `<canvas width="96" height="96"></canvas>` +
+      `<span class="mc-check">&#10003;</span>` +
+      `<span class="mc-name">${def.name}</span>` +
+      `<span class="mc-blurb">${def.blurb}</span>`;
+    card.addEventListener('click', () => {
+      selectedMapIdx = i;
+      renderMapCards();
+      applyMap(i);   // instant local preview (B's choice is broadcast on start)
+    });
+    mapCardsWrap.appendChild(card);
+
+    // top-down preview: walls in the palette accent on that map's night sky
+    const cv = card.querySelector('canvas');
+    const c2 = cv.getContext('2d');
+    c2.fillStyle = def.palette.skyBot;
+    c2.fillRect(0, 0, 96, 96);
+    c2.fillStyle = def.palette.accent;
+    for (let y = 0; y < def.grid.length; y++) {
+      for (let x = 0; x < def.grid[y].length; x++) {
+        if (def.grid[y][x] === '1') c2.fillRect(x * 4, y * 4, 4, 4);
+      }
+    }
+    // beacons as warning-red pixels
+    c2.fillStyle = '#ff3b6b';
+    for (const b of def.beacons) c2.fillRect(b.x * 4 + 1, b.y * 4 + 1, 2, 2);
+  });
+}
+
+let music = null;   // AmbientMusic — shared bgm bed (module-level for __echoes)
+
+// -------------------------------------------------------------------------
+// ROLE SELECTION
+//   Server mode: the server arbitrates (rejects a role already held by the
+//   partner). Local mode: NetLink just announces our role to sibling tabs.
+// -------------------------------------------------------------------------
+document.getElementById('role-a-btn').addEventListener('click', () => pickRole('A'));
+document.getElementById('role-b-btn').addEventListener('click', () => pickRole('B'));
+
+async function pickRole(r) {
+  if (game.role) return;
+  try {
+    await net.claimRole(r);
+  } catch (err) {
+    setNetStatus(`${err.message} — pick the other role`, 'bad');
+    return;
+  }
+  selectRole(r);
+}
+
+function selectRole(r) {
+  game.role = r;
+  titleScreen.classList.add('hidden');
+  gameContainer.classList.remove('hidden');
+
+  // Single-role layout: hide the other panel entirely
+  gameContainer.classList.add('role-only');
+  gameContainer.classList.toggle('is-role-a', r === 'A');
+  gameContainer.classList.toggle('is-role-b', r === 'B');
+
+  // SYMBIOTIC AUDIO:
+  //   Player A is the ears  -> A's tab owns the AudioContext.
+  //   Player B is the eyes  -> B's tab NEVER initialises game audio.
+  //                            B is completely deaf in-game.
+  //   Shared exception: the ambient music bed plays on BOTH tabs
+  //   (B through a private context) — everything gameplay-relevant
+  //   (beacons, ghost, breathing, footsteps) still only exists for A.
+  music = new AmbientMusic();
+  if (r === 'A') {
+    audio.init();
+    audio.resume();
+    // Restore persisted spatial calibration (polar remap + loudness env)
+    const saved = loadCal();
+    if (saved) audio.setCalibration(saved);
+    calBtn.classList.remove('hidden');
+
+    // Load CC0 samples (breathing + footsteps) and the shared music bed.
+    // One bank, one fetch pass; loading is non-blocking — synth fallbacks
+    // cover the gap meanwhile.
+    const bank = new AudioAssetBank();
+    const bankReady = bank.load(audio.ctx);
+    bankReady
+      .then(() => audio.attachBank(bank))
+      .catch((err) => console.warn('[audio] asset bank failed', err));
+    music.startShared(audio.ctx, bankReady.then(() => bank));
+  } else if (r === 'B') {
+    // B's tab: music only, through its own minimal context.
+    music.startStandalone();
+    // B owns the ground: announce the chosen location to A (and keep the
+    // snapshot stream carrying it as a late-join safety net).
+    net.send({ type: 'b-map', idx: game.mapIdx });
+  }
+
+  updateSyncStatus();
+  game.phase = STATE.PLAY;
+}
 
 // Normalize an angle into [-PI, PI]
 function normAngle(a) {
@@ -185,6 +427,7 @@ const STATE = Object.freeze({
 const game = {
   phase:  STATE.TITLE,
   role:   null,        // 'A' | 'B' | null
+  mapIdx: 0,           // active MAP_DEFS index (B is the authority)
   tension:        0,
   ghostProximity: 0,
   ghostX:         ghost.x,
@@ -195,36 +438,84 @@ const game = {
   aState:         null,   // render payload for A's sensor terminal
 };
 
+renderMapCards();   // title-screen location previews
+applyMap(0);        // set the HUD location chips for the default map
+
 // -------------------------------------------------------------------------
-// CROSS-TAB SYNC (BroadcastChannel — same-origin tabs only)
-//   Player B tab is the primary simulation source.
-//   Player A tab receives state and renders.
-//   When only one tab is open, that tab runs standalone.
+// NETWORK LAYER (js/net.js — NetLink)
+//   SERVER mode: WebSocket relay (server/server.js) — true cross-device
+//               multiplayer, room-code matchmaking, server-side role
+//               arbitration. Player B's tab stays the simulation authority;
+//               the server is a dumb relay (the Mirror-style transport).
+//   LOCAL mode: BroadcastChannel fallback — same-browser tabs, zero setup.
+//   The game code below only ever calls net.send(); presence events
+//   ('present' / 'goodbye') are synthesized identically by both transports.
 // -------------------------------------------------------------------------
-let channel       = null;
+const net = new NetLink();
 let remotePresent = false;
-let remotePlayerB = false;     // has another tab taken role B?
+let remotePlayerB = false;     // has the partner taken role B?
 let remoteRole    = null;
 
-try {
-  channel = new BroadcastChannel('echoes852-sync');
-  channel.onmessage = (e) => onChannelMessage(e.data);
-  // Announce our presence
-  setTimeout(() => channel?.postMessage({ type: 'hello', role: game.role }), 50);
-} catch (err) {
-  console.warn('[sync] BroadcastChannel unavailable — running standalone', err);
+net.onMessage(onGameMessage);
+net.onStatus(updateSyncStatus);
+net.startLocal();   // warm the BroadcastChannel fallback immediately
+
+// --- Title-screen network UI ---
+const netUrl     = document.getElementById('net-url');
+const netCode    = document.getElementById('net-code');
+const netStatus  = document.getElementById('net-status');
+const netCreate  = document.getElementById('net-create');
+const netJoin    = document.getElementById('net-join');
+
+netUrl.value = defaultServerUrl();
+
+function setNetStatus(text, cls = '') {
+  netStatus.textContent = text;
+  netStatus.className   = `net-status ${cls}`.trim();
 }
 
-function onChannelMessage(msg) {
+async function connectToServer(code) {
+  netCreate.disabled = true;
+  netJoin.disabled   = true;
+  setNetStatus(`connecting to ${netUrl.value} …`, 'wait');
+  try {
+    const room = await net.connectServer(netUrl.value.trim(), code);
+    setNetStatus(`room ${room} — share the code with your partner`, 'ok');
+  } catch (err) {
+    setNetStatus(`server unreachable (${err.message}) — falling back to local mode`, 'bad');
+    throw err;
+  } finally {
+    netCreate.disabled = false;
+    netJoin.disabled   = false;
+  }
+}
+
+netCreate.addEventListener('click', async () => {
+  const code = generateRoomCode();
+  netCode.value = code;
+  try {
+    await connectToServer(code);
+  } catch { /* status already shown; local fallback is live */ }
+});
+
+netJoin.addEventListener('click', async () => {
+  const code = netCode.value.trim().toUpperCase();
+  if (code.length < 4) {
+    setNetStatus('enter the 4-character room code first', 'bad');
+    return;
+  }
+  try {
+    await connectToServer(code);
+  } catch { /* status already shown; local fallback is live */ }
+});
+
+netCode.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') netJoin.click();
+});
+
+function onGameMessage(msg) {
   if (!msg || !msg.type) return;
   switch (msg.type) {
-    case 'hello': {
-      // Another tab is asking who's around; reply if we already picked a role
-      if (game.role) {
-        channel?.postMessage({ type: 'present', role: game.role });
-      }
-      break;
-    }
     case 'present': {
       if (msg.role && msg.role !== game.role) {
         remotePresent = true;
@@ -242,8 +533,19 @@ function onChannelMessage(msg) {
       break;
     }
     // ---- Player B -> Player A stream ----
+    case 'b-map': {
+      // B (world authority) announces the ground. A mirrors it.
+      if (game.role === 'A' && Number.isInteger(msg.idx)) {
+        applyMap(msg.idx);
+        selectedMapIdx = msg.idx;
+        renderMapCards();
+      }
+      break;
+    }
     case 'b-state': {
       if (game.role === 'A') {
+        // Late-joining safety: the map index rides every snapshot
+        if (Number.isInteger(msg.mi) && msg.mi !== game.mapIdx) applyMap(msg.mi);
         playerB.x    = msg.x;
         playerB.y    = msg.y;
         playerB.yaw  = msg.yaw;
@@ -254,6 +556,7 @@ function onChannelMessage(msg) {
         ghost.staticLevel = msg.gsl;
         ghost.rageTimer = msg.gr ? 5 : 0;
         if (typeof msg.isMoving === 'boolean') playerB.isMoving = msg.isMoving;
+        if (typeof msg.isSprinting === 'boolean') playerB.isSprinting = msg.isSprinting;
         // beacon progress
         if (Array.isArray(msg.collected)) {
           msg.collected.forEach((c, i) => {
@@ -300,47 +603,21 @@ function onChannelMessage(msg) {
 
 function updateSyncStatus() {
   if (!syncStatus) return;
-  if (!remotePresent) {
-    syncStatus.textContent = 'standalone session';
+  if (net.mode === NET_MODE.SERVER && net.connected) {
+    syncStatus.textContent = net.hasPeer()
+      ? `linked: room ${net.room} (server)`
+      : `room ${net.room} — waiting for partner…`;
+    syncStatus.className = net.hasPeer() ? 'cap-sync linked' : 'cap-sync';
+  } else if (remotePresent) {
+    syncStatus.textContent = `linked to role ${remoteRole} (local)`;
+    syncStatus.className   = 'cap-sync linked';
+  } else if (net.mode === NET_MODE.SERVER && !net.connected) {
+    syncStatus.textContent = 'server link lost';
     syncStatus.className   = 'cap-sync';
   } else {
-    syncStatus.textContent = `linked to role ${remoteRole}`;
-    syncStatus.className   = 'cap-sync linked';
+    syncStatus.textContent = 'standalone session';
+    syncStatus.className   = 'cap-sync';
   }
-}
-
-// -------------------------------------------------------------------------
-// ROLE SELECTION
-// -------------------------------------------------------------------------
-function selectRole(r) {
-  game.role = r;
-  titleScreen.classList.add('hidden');
-  gameContainer.classList.remove('hidden');
-
-  // Single-role layout: hide the other panel entirely
-  gameContainer.classList.add('role-only');
-  gameContainer.classList.toggle('is-role-a', r === 'A');
-  gameContainer.classList.toggle('is-role-b', r === 'B');
-
-  // SYMBIOTIC AUDIO:
-  //   Player A is the ears  -> A's tab owns the AudioContext.
-  //   Player B is the eyes  -> B's tab NEVER initialises audio.
-  //                            B is completely deaf in-game.
-  if (r === 'A') {
-    audio.init();
-    audio.resume();
-    // Restore persisted spatial calibration (polar remap + loudness env)
-    const saved = loadCal();
-    if (saved) audio.setCalibration(saved);
-    calBtn.classList.remove('hidden');
-  }
-
-  // Tell the channel we joined and who we are.
-  channel?.postMessage({ type: 'present', role: r });
-  setTimeout(() => channel?.postMessage({ type: 'present', role: r }), 100);
-  updateSyncStatus();
-
-  game.phase = STATE.PLAY;
 }
 
 window.addEventListener('keydown', (e) => {
@@ -362,7 +639,7 @@ window.addEventListener('keydown', (e) => {
       if (d < 2.0) {
         const idx = playerA.activeBeaconIdx;
         const ok = playerA.collectBeacon(idx, null);   // B is deaf: no chime here
-        if (ok) channel?.postMessage({ type: 'b-beacon-collected', idx });
+        if (ok) net.send({ type: 'b-beacon-collected', idx });
       }
     }
   }
@@ -385,18 +662,11 @@ function triggerLure(idx) {
   // Loud spatial ping in A's own headphones, at the beacon's true position
   audio.playLurePing?.(bx, by);
   // The ghost hears it too (it is simulated in Player B's tab)
-  channel?.postMessage({ type: 'a-lure', x: bx, y: by, idx });
+  net.send({ type: 'a-lure', x: bx, y: by, idx });
 }
 
-const origSetActive = playerA.setActiveBeaconIdx?.bind(playerA);
-playerA.setActiveBeaconIdx = function (idx) {
-  if (origSetActive) origSetActive(idx);
-  else this.activeBeaconIdx = idx;
-  if (game.role === 'A') {
-    channel?.postMessage({ type: 'a-target', idx });
-    if (game.phase === STATE.PLAY) triggerLure(idx);
-  }
-};
+// (Player A's setActiveBeaconIdx hook lives in hookPlayerA() above — it is
+//  re-attached every time applyMap() rebuilds the playerA instance.)
 
 // =========================================================================
 // MEMORY ECHO SUBTITLE (Player A)
@@ -601,12 +871,14 @@ window.addEventListener('resize', () => {
 });
 
 window.addEventListener('beforeunload', () => {
-  channel?.postMessage({ type: 'goodbye' });
+  net.disconnect();   // local goodbye ping + clean socket close
 });
 
 // -------------------------------------------------------------------------
 // UPDATE
 // -------------------------------------------------------------------------
+let bStateTimer = 0;   // 30Hz throttle for the b-state snapshot stream
+
 function update(dt) {
   // ----- Player B is the primary simulation source (and is DEAF) -----
   if (game.role === 'B') {
@@ -616,7 +888,7 @@ function update(dt) {
     // Memory echoes: B walks past residues unaware; each triggers ONCE
     // and is broadcast to A (who hears the whisper + reads the fragment).
     const echoEvt = echoes.update(dt, playerB.x, playerB.y);
-    if (echoEvt) channel?.postMessage({ type: 'b-echo', idx: echoEvt.idx });
+    if (echoEvt) net.send({ type: 'b-echo', idx: echoEvt.idx });
 
     // Mirror to render state
     game.playerX   = playerB.x;
@@ -645,16 +917,22 @@ function update(dt) {
     }
 
     // ---- Broadcast the full sensory world to Player A ----
-    if (channel) {
-      const collected = playerA.beacons.map(b => b.collected);
-      channel.postMessage({
+    // Throttled to 30Hz: over a real network the full-state snapshot does
+    // not need to ride every frame (Unity equivalent: NetworkTransform
+    // sendRate). Local mode inherits the same cadence harmlessly.
+    bStateTimer += dt;
+    if (bStateTimer >= 1 / 30) {
+      bStateTimer = 0;
+      net.send({
         type: 'b-state',
+        mi: game.mapIdx,
         x: playerB.x, y: playerB.y, yaw: playerB.yaw,
         gx: ghost.x, gy: ghost.y, ga: ghost.aggression,
         gs: ghost.state, gsl: ghost.staticLevel,
         gr: ghost.rageTimer > 0,
         isMoving: playerB.isMoving,
-        collected,
+        isSprinting: playerB.isSprinting,
+        collected: playerA.beacons.map(b => b.collected),
       });
     }
 
@@ -662,7 +940,7 @@ function update(dt) {
   }
   // ----- Player A: the ears. Listens THROUGH Player B via the link. -----
   else if (game.role === 'A') {
-    // State values arrive via channel messages ('b-state').
+    // State values arrive via net messages ('b-state').
     game.playerX   = playerB.x;
     game.playerY   = playerB.y;
     game.playerYaw = playerB.yaw;
@@ -712,6 +990,7 @@ function update(dt) {
       aggression: ghost.aggression,
       tension:    game.tension,
       isMoving:   playerB.isMoving,
+      isSprinting: playerB.isSprinting,
       dt,
     });
 
@@ -918,7 +1197,7 @@ function restart() {
 }
 
 // Testing / demo handle — also the seam the Unity migration demos drive.
-window.__echoes = { game, map, playerA, playerB, ghost, audio, decoy, echoes };
+window.__echoes = { game, map, playerA, playerB, ghost, audio, decoy, echoes, net, music: () => music };
 
 // -------------------------------------------------------------------------
 // RENDER

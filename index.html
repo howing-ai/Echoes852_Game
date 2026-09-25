@@ -6,6 +6,9 @@
   <title>Echoes of Hong Kong // Prototype v0.2</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23040a08'/><rect x='6' y='6' width='20' height='20' fill='none' stroke='%239af0a0' stroke-width='1.6'/><circle cx='16' cy='16' r='3.2' fill='none' stroke='%239af0a0' stroke-width='1.4'/><circle cx='16' cy='16' r='1.4' fill='%239af0a0'/></svg>" />
   <link rel="stylesheet" href="css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 </head>
 <body>
   <!-- ============== CRT OVERLAY ============== -->
@@ -13,28 +16,56 @@
 
   <!-- ============== TITLE / ROLE SELECT ============== -->
   <section id="title-screen" class="screen">
-    <h1>ECHOES<br/><em>OF HONG&nbsp;KONG</em></h1>
-    <p class="tagline">two players &middot; one asymmetric truth</p>
+    <header class="ts-head">
+      <h1>ECHOES <em>OF HONG&nbsp;KONG</em></h1>
+      <p class="tagline">two players &middot; one asymmetric truth</p>
+    </header>
 
-    <p class="role-prompt">// SELECT YOUR ROLE</p>
+    <!-- STEP 1 — network link -->
+    <section class="ts-step" aria-label="network link">
+      <h2 class="ts-step-title"><span class="ts-num">1</span>LINK UP</h2>
+      <div id="net-panel">
+        <div class="net-row">
+          <input id="net-url" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="wss://your-relay-server/ws" aria-label="relay server url" />
+        </div>
+        <div class="net-row">
+          <button id="net-create" type="button">CREATE&nbsp;ROOM</button>
+          <input id="net-code" type="text" maxlength="8" spellcheck="false" autocomplete="off"
+                 placeholder="CODE" aria-label="room code" />
+          <button id="net-join" type="button">JOIN&nbsp;ROOM</button>
+        </div>
+        <p id="net-status" class="net-status">offline &mdash; roles will link locally (same-browser tabs)</p>
+      </div>
+    </section>
 
-    <div class="role-buttons">
-      <button id="role-a-btn" class="role-button" type="button" data-role="A">
-        <span class="rb-tag">// ROLE A</span>
-        <span class="rb-title">SENSOR &middot; THE EARS</span>
-        <span class="rb-desc">You are deaf to nothing. Hear the beacons and the ghost through your partner's ears. Guide them by voice.</span>
-        <span class="rb-keys"><kbd>LISTEN</kbd><kbd>1-5</kbd><kbd>SPEAK</kbd></span>
-      </button>
-      <button id="role-b-btn" class="role-button" type="button" data-role="B">
-        <span class="rb-tag">// ROLE B</span>
-        <span class="rb-title">DRIFTER &middot; THE EYES</span>
-        <span class="rb-desc">You are completely deaf. Navigate by sight alone. Your survival depends on your partner's voice.</span>
-        <span class="rb-keys"><kbd>WASD</kbd><kbd>MOUSE</kbd><kbd>E</kbd></span>
-      </button>
-    </div>
+    <!-- STEP 2 — location -->
+    <section class="ts-step" aria-label="location select">
+      <h2 class="ts-step-title"><span class="ts-num">2</span>PICK A LOCATION</h2>
+      <div id="map-cards" class="map-cards"></div>
+      <p class="ts-note">drifter (role B) chooses the ground &mdash; the ears follow automatically</p>
+    </section>
 
-    <p class="hint">open a second tab on any device &middot; pick the other role &middot; communicate via voice</p>
-    <p class="hint dim">Press <kbd>TAB</kbd> in-game to toggle split / stacked layout.</p>
+    <!-- STEP 3 — role -->
+    <section class="ts-step" aria-label="role select">
+      <h2 class="ts-step-title"><span class="ts-num">3</span>CHOOSE YOUR ROLE</h2>
+      <div class="role-buttons">
+        <button id="role-a-btn" class="role-button" type="button" data-role="A">
+          <span class="rb-tag">// ROLE A</span>
+          <span class="rb-title">SENSOR &middot; THE EARS</span>
+          <span class="rb-desc">You are deaf to nothing. Hear the beacons and the ghost through your partner's ears. Guide them by voice.</span>
+          <span class="rb-keys"><kbd>LISTEN</kbd><kbd>1&ndash;5</kbd><kbd>SPEAK</kbd></span>
+        </button>
+        <button id="role-b-btn" class="role-button" type="button" data-role="B">
+          <span class="rb-tag">// ROLE B</span>
+          <span class="rb-title">DRIFTER &middot; THE EYES</span>
+          <span class="rb-desc">You are completely deaf. Navigate by sight alone. Your survival depends on your partner's voice.</span>
+          <span class="rb-keys"><kbd>WASD</kbd><kbd>MOUSE</kbd><kbd>E</kbd></span>
+        </button>
+      </div>
+    </section>
+
+    <p class="hint">create a room &middot; share the code with a partner anywhere &middot; communicate via voice</p>
   </section>
 
   <!-- ============== GAME STAGE ============== -->
@@ -42,7 +73,8 @@
     <!-- ========== PLAYER A: SENSOR TERMINAL (the ears) ========== -->
     <section id="player-a-panel" class="viewport">
       <header class="vp-header">
-        <span class="tag">PLAYER&nbsp;A &nbsp;//&nbsp; RECEIVER</span>
+        <span class="tag">PLAYER&nbsp;A &middot; RECEIVER</span>
+        <span class="loc-chip" id="loc-name-a">—</span>
         <span class="status" id="status-a">SENSORS NOMINAL</span>
         <button id="cal-btn" class="cal-btn hidden" type="button" title="Calibrate spatial audio">CAL</button>
       </header>
@@ -78,14 +110,15 @@
         <div id="echo-subtitle" class="echo-subtitle hidden" aria-live="polite"></div>
       </div>
       <footer id="a-terminal-hint" class="a-hint">
-        <span class="ah-k">1&ndash;5</span> ping an echo &mdash; loud enough for the entity to hear &middot; guide by voice, listen through their ears
+        <kbd>1&ndash;5</kbd> ping an echo &mdash; loud enough for the entity to hear
       </footer>
     </section>
 
     <!-- ========== PLAYER B: FIRST-PERSON DRIFT ========== -->
     <section id="player-b-panel" class="viewport">
       <header class="vp-header">
-        <span class="tag">PLAYER&nbsp;B &nbsp;//&nbsp; FIRST-PERSON&nbsp;DRIFT</span>
+        <span class="tag">PLAYER&nbsp;B &middot; DRIFTER</span>
+        <span class="loc-chip" id="loc-name-b">—</span>
         <span class="status" id="status-b">DRIFTING</span>
       </header>
       <div class="vp-canvas-wrap">
@@ -93,7 +126,7 @@
         <div id="static-overlay"></div>
         <div id="vignette-b"></div>
         <div id="crosshair">+</div>
-        <div id="audio-hud">DEAF MODE — NO AUDIO CUES</div>
+        <div id="audio-hud">DEAF MODE — AMBIENT FEED ONLY</div>
         <div id="target-indicator">TARGET: <span id="target-text">--</span></div>
         <div id="compass">
           <span data-dir="N">N</span>

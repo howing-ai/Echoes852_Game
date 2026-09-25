@@ -14,10 +14,12 @@ modules translate to well-known Unity subsystems.
 | JS Module | Responsibility | Unity Counterpart | Effort |
 |---|---|---|---|
 | `js/main.js` | Bootstrap, game state machine, main loop, cross-tab sync | `GameManager` (singleton) + `GameStateMachine` + scenes | Medium |
-| `js/main.js` → `GameMap` | 24×24 grid, walls, raycast | `Tilemap` + `TilemapCollider2D`* or 3D meshes + `NavMesh` | Medium |
+| `js/main.js` → `MAP_DEFS` + `GameMap` | 24×24 grid, walls, raycast, three location palettes | `LocationDefinition` ScriptableObjects + `Tilemap` / 3D mesh prefabs + `NavMesh` | Medium |
 | `js/player.js` → `PlayerB` | First-person movement + raycasting renderer | `CharacterController` + Cinemachine FP camera (3D replaces the raycaster entirely) | Low |
 | `js/player.js` → `PlayerA` | Sensor terminal canvas UI | UGUI / UI Toolkit `SensorTerminalUI` + `AudioSourceSpectrum` | Low |
 | `js/audio.js` → `SpatialAudio` | HRTF panners, distance curves, filters, one-shots | `AudioListener` (on B's camera) + `AudioSource` pool + `AudioMixer` | Medium |
+| `js/audioAssets.js` → `AudioAssetBank` | CC0 sample loading + event→asset mapping | serialized `AudioClip` fields on an `AudioDirector` component | Trivial |
+| `js/music.js` → `AmbientMusic` | shared BGM bed (A reuses ctx, B gets private one) | one 2D looping `AudioSource` per client, `AudioClip` = bgm asset | Trivial |
 | `js/audio.js` → `_atmosFilter` | 500 Hz/Q0.7 atmosphere LPF on every source | One `AudioMixerGroup` ("Atmosphere") with a Lowpass filter — set once, route everything through it | Trivial |
 | `js/audio.js` → calibration hooks | Polar remap pre-warp, loudness envelope, cal mode | `SpatialCalibrationService` (static C# port) + per-source pre-warp before `transform.position` assignment | Medium |
 | `js/ghost.js` | 4-state FSM + aggression/static dynamics | `GhostAI : MonoBehaviour` (same FSM, `NavMeshAgent` for movement) | Low |
@@ -25,7 +27,8 @@ modules translate to well-known Unity subsystems.
 | `js/decoy.js` | False-ear director (pure logic) | `DecoyDirector : MonoBehaviour` — ports line-by-line | Trivial |
 | `js/memoryEchoes.js` | Residue placement + whisper triggers + archive | `MemoryEchoSystem` + `SphereCollider` triggers + `EchoFragment` ScriptableObjects | Low |
 | `css/style.css`, CRT overlay | Terminal aesthetics | UI Toolkit + custom shaders (scanlines, bloom, chromatic aberration) | Medium |
-| BroadcastChannel sync | Cross-tab state relay | **Netcode for GameObjects** (Unity Relay + Lobby) or Photon Fusion — see §4 | High |
+| `js/net.js` → `NetLink` | Transport abstraction: WebSocket relay (server mode) + BroadcastChannel (local fallback), room codes, role arbitration | **Netcode for GameObjects** `NetworkManager` + `INetworkTransport` — see §4 | Low |
+| `server/server.js` | Dumb relay: room matchmaking, role arbitration, message forwarding, static hosting | Unity Relay (rooms/allocations) + Lobby service — the relay itself disappears | — |
 
 \* In the Digital Twin 3D target, the grid becomes real geometry; keep a
 logical `IGridMap` interface (`bool IsWall(float x, float y)`) so ghost AI,
@@ -58,6 +61,21 @@ playWhisper(): no panner, no atmos   →   AudioSource.spatialBlend = 0,
                                          routed OUTSIDE the Atmosphere group
                                          ("inside your head" by design)
 ```
+
+**Sampled CC0 assets** (`assets/audio/` — provenance in `CREDITS.md`): the four
+files port directly as `AudioClip`s. Event mapping: `bgm_dark_drone` → 2D loop
+on both clients (`AmbientMusic` → one `AudioSource` each); `breath_sprint_loop`
+→ 2D loop on A's client, gain cross-faded by B's sprint `NetworkVariable`;
+`footstep_single` → one-shot pool with ±8% random pitch. The beacon synth keeps
+its sub-octave + 0.55 Hz tremolo character (two extra oscillators per source) —
+port as a second `AudioSource` at half frequency on the same mixer group.
+
+**Location / map visual identity**: `MAP_DEFS` become `LocationDefinition`
+ScriptableObjects; the palette struct (wallNear/Far, edge, sky, floor) maps to a
+`LocationPalette` asset. Player B's camera background + global fog + wall
+materials read the selected palette. In the Digital Twin, swap the `Tilemap`
+sprite/mesh palette and the post-process colour grading per location so players
+instantly know which part of Hong Kong they are in.
 
 **Listener orientation**: the POC writes `forward = (cos yaw, 0, sin yaw)`,
 `up = (0,1,0)` every frame with a normalized yaw (`wrap()`). In Unity the
@@ -93,15 +111,37 @@ Persistence: `localStorage` → `PlayerPrefs.SetString("cal.profile", json)`
 
 ---
 
-## 4. Networking — replacing BroadcastChannel
+## 4. Networking — NetLink + relay server
 
-The POC's message protocol is already a clean wire format. Map it directly
+The POC now has **real cross-device networking** (`js/net.js` +
+`server/server.js`), structured exactly like the Unity target:
+
+```
+JS POC (today)                                Unity (target)
+──────────────────────────────────────       ──────────────────────────────────────
+js/net.js NetLink                          → NetworkClient (NGO NetworkManager)
+  ├─ SERVER mode: WebSocket relay          →   Relay transport (WebSocket → UDP)
+  └─ LOCAL mode: BroadcastChannel          →   (editor/offline mode; dropped)
+server/server.js (dumb relay)              →   Unity Relay + Lobby service
+  ├─ room codes (4-char, max 2 players)    →   Lobby join codes
+  ├─ role arbitration (A/B once each)      →   connection approval / lobby slots
+  └─ {t:'msg'} envelopes relayed verbatim  →   NGO messaging handles framing
+net.send(msg) — single game-facing API     →   NetworkClient.Send(msg)
+present/goodbye synthesized per transport  →   lobby player add/remove events
+b-state throttled to 30 Hz                 →   NetworkTransform sendRate 30
+```
+
+The relay is deliberately dumb (never inspects game payloads) — in Unity it
+is replaced wholesale by Relay/Lobby, and only `NetLink`'s public surface
+(`send`, `onMessage`, `claimRole`, room join flow) needs a new backend.
+
+The POC message protocol is already a clean wire format. Map it directly
 to Netcode for GameObjects custom messages (or Fusion RPCs):
 
 | POC message | Fields | Direction | Unity equivalent |
 |---|---|---|---|
-| `hello` / `present` / `goodbye` | role | both | Lobby presence + connection approval |
-| `b-state` | x, y, yaw, gx, gy, ga, gs, gsl, gr, isMoving, collected[] | B → A, ~20 Hz | `NetworkTransform` on B's rig + ghost (server-authoritative) + `NetworkVariable`s for aggression/state |
+| `present` / `goodbye` | role | both (synthesized by NetLink) | Lobby presence + connection approval |
+| `b-state` | x, y, yaw, gx, gy, ga, gs, gsl, gr, isMoving, collected[] | B → A, 30 Hz | `NetworkTransform` on B's rig + ghost (server-authoritative) + `NetworkVariable`s for aggression/state |
 | `b-beacon-collected` | idx | B → A | Server RPC → client RPC (event) |
 | `a-target` | idx | A → B | client RPC |
 | `a-lure` | x, y, idx | A → B | client RPC → server `ghost.Investigate(x, y)` |
@@ -169,7 +209,7 @@ Tuning values (speeds 1.6/3.4, thresholds 18/7/14, rage 8s) move into a
         │  PlayerB input → movement                            │
         │  GhostAI.update(dt, B.pos)     [simulation authority]│
         │  MemoryEcho triggers           → b-echo RPC          │
-        │  b-state broadcast             ────────────────┐     │
+        │  b-state broadcast (30 Hz)     ────────────────┐     │
         └────────────────────────────────────────────────┼─────┘
                                                           ▼
         ┌────────── Player A client (the ears, blind) ─────────┐

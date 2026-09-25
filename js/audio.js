@@ -39,11 +39,20 @@ export class SpatialAudio {
     this.calMode        = false;   // true while the calibration pad runs
 
     // Beacon (objective target)
+    // REDESIGNED for a less intrusive character: pure sine carrier (the
+    // distance->pitch mechanic and the decoy's "pure sine" tell are core
+    // gameplay), plus a soft sub-octave pad and a slow breathing tremolo,
+    // at noticeably lower loudness. It now reads as a distant wind-chime
+    // hum instead of a constant test tone.
     this.beaconOsc      = null;
+    this.beaconSub      = null;   // sine one octave down — warmth
+    this.beaconSubGain  = null;
+    this.beaconTrem     = null;   // slow LFO depth node — breathing motion
     this.beaconGain     = null;
     this.beaconPanner   = null;
     this.beaconFreqMin  = 300;
     this.beaconFreqMax  = 720;
+    this.beaconLoudMax  = 0.34;   // was 0.5 — the old constant hum was fatiguing
 
     // Ghost proximity hum
     this.ghostOsc       = null;
@@ -53,11 +62,20 @@ export class SpatialAudio {
 
     // Ghost decoy ("the false ear") — mimics a beacon from a false bearing
     this.decoyOsc       = null;   // pure sine carrier (mimics the beacon)
+    this.decoySub       = null;   // sub-octave — mimics the beacon's new warmth
+    this.decoySubGain   = null;
+    this.decoyTrem      = null;   // same tremolo — the mimic must sound identical
     this.decoyDirt      = null;   // faint detuned sawtooth — THE TELL
     this.decoyDirtGain  = null;
     this.decoyGain      = null;
     this.decoyAtmos     = null;
     this.decoyPanner    = null;
+
+    // Sampled assets (js/audioAssets.js) + Rain's sprint breathing
+    this.bank           = null;
+    this.breathSrc      = null;   // looping CC0 fast-breath sample
+    this.breathFilter   = null;
+    this.breathGain     = null;
 
     // Heartbeat
     this.heartbeatTimer  = 0;
@@ -91,9 +109,29 @@ export class SpatialAudio {
     this.listener = this.ctx.listener;
 
     // ===== Beacon panner (objective sound source in the world) =====
+    // Chain: carrier(s) -> tremolo -> gain -> atmos -> panner -> master.
+    // The sub-octave and 0.55Hz tremolo replace the old fatiguing constant
+    // tone with a gentle breathing hum; pitch-vs-distance is unchanged.
     this.beaconOsc = this.ctx.createOscillator();
     this.beaconOsc.type = 'sine';
     this.beaconOsc.frequency.value = this.beaconFreqMin;
+
+    this.beaconSub = this.ctx.createOscillator();
+    this.beaconSub.type = 'sine';
+    this.beaconSub.frequency.value = this.beaconFreqMin / 2;
+
+    this.beaconSubGain = this.ctx.createGain();
+    this.beaconSubGain.gain.value = 0.22;
+
+    // Tremolo: gain rides 0.75 ± 0.25 (a breath, not a beep)
+    this.beaconTrem = this.ctx.createGain();
+    this.beaconTrem.gain.value = 0.75;
+    const beaconLfo = this.ctx.createOscillator();
+    beaconLfo.frequency.value = 0.55;
+    const beaconLfoDepth = this.ctx.createGain();
+    beaconLfoDepth.gain.value = 0.25;
+    beaconLfo.connect(beaconLfoDepth).connect(this.beaconTrem.gain);
+    beaconLfo.start();
 
     this.beaconGain = this.ctx.createGain();
     this.beaconGain.gain.value = 0;
@@ -110,11 +148,15 @@ export class SpatialAudio {
     this.beaconPanner.maxDistance = 80;
     this.beaconPanner.rolloffFactor = 0.25;
 
-    this.beaconOsc.connect(this.beaconGain);
-    this.beaconGain.connect(this.beaconAtmos);          // atmosphere tints BEFORE panner
+    this.beaconOsc.connect(this.beaconTrem);
+    this.beaconSub.connect(this.beaconSubGain);
+    this.beaconSubGain.connect(this.beaconTrem);
+    this.beaconTrem.connect(this.beaconGain);
+    this.beaconGain.connect(this.beaconAtmos);         // atmosphere tints BEFORE panner
     this.beaconAtmos.connect(this.beaconPanner);
     this.beaconPanner.connect(this.master);
     this.beaconOsc.start();
+    this.beaconSub.start();
 
     // ===== Ghost hum — NOW SPATIAL (A hears WHERE the ghost is) =====
     this.ghostOsc = this.ctx.createOscillator();
@@ -157,12 +199,28 @@ export class SpatialAudio {
     this.ghostOsc.start();
 
     // ===== Ghost decoy — the false ear =====
-    // Pure sine carrier so it initially reads as "a beacon". A faint
-    // detuned sawtooth rides underneath: real beacons are pure sines, so
-    // the trace of harmonics is the spectral tell for a sharp listener.
+    // Mimics the beacon's NEW timbre exactly (sine carrier + sub-octave +
+    // same 0.55Hz tremolo) so the disguise holds. A faint detuned sawtooth
+    // rides underneath: real beacons are pure sines, so the trace of
+    // harmonics is the spectral tell for a sharp listener.
     this.decoyOsc = this.ctx.createOscillator();
     this.decoyOsc.type = 'sine';
     this.decoyOsc.frequency.value = 440;
+
+    this.decoySub = this.ctx.createOscillator();
+    this.decoySub.type = 'sine';
+    this.decoySub.frequency.value = 220;
+    this.decoySubGain = this.ctx.createGain();
+    this.decoySubGain.gain.value = 0.22;
+
+    this.decoyTrem = this.ctx.createGain();
+    this.decoyTrem.gain.value = 0.75;
+    const decoyLfo = this.ctx.createOscillator();
+    decoyLfo.frequency.value = 0.55;
+    const decoyLfoDepth = this.ctx.createGain();
+    decoyLfoDepth.gain.value = 0.25;
+    decoyLfo.connect(decoyLfoDepth).connect(this.decoyTrem.gain);
+    decoyLfo.start();
 
     this.decoyDirt = this.ctx.createOscillator();
     this.decoyDirt.type = 'sawtooth';
@@ -181,13 +239,17 @@ export class SpatialAudio {
     this.decoyPanner.maxDistance = 80;
     this.decoyPanner.rolloffFactor = 0.25;
 
-    this.decoyOsc.connect(this.decoyGain);
+    this.decoyOsc.connect(this.decoyTrem);
+    this.decoySub.connect(this.decoySubGain);
+    this.decoySubGain.connect(this.decoyTrem);
     this.decoyDirt.connect(this.decoyDirtGain);
-    this.decoyDirtGain.connect(this.decoyGain);
+    this.decoyDirtGain.connect(this.decoyTrem);
+    this.decoyTrem.connect(this.decoyGain);
     this.decoyGain.connect(this.decoyAtmos);
     this.decoyAtmos.connect(this.decoyPanner);
     this.decoyPanner.connect(this.master);
     this.decoyOsc.start();
+    this.decoySub.start();
     this.decoyDirt.start();
   }
 
@@ -207,6 +269,37 @@ export class SpatialAudio {
 
   resume() {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  // ------------------------------------------------------------------------
+  // attachBank(bank): plug in the decoded CC0 samples (js/audioAssets.js).
+  //   'breath' becomes Rain's (Player B's) sprint breathing — a looping
+  //   fast-breath sample. Non-spatial and routed around the 500Hz
+  //   atmosphere LPF (breaths need the 1-2kHz band to read as breathing);
+  //   its own gentle 2.4kHz LPF keeps it soft. It lives in B's body, so it
+  //   arrives like the whisper: from inside, at no position.
+  //   The footstep sample replaces the old synth pluck in _playFootstep.
+  // ------------------------------------------------------------------------
+  attachBank(bank) {
+    this.bank = bank;
+    if (!this.ctx || !bank?.has('breath')) return;
+
+    this.breathSrc = this.ctx.createBufferSource();
+    this.breathSrc.buffer = bank.get('breath');
+    this.breathSrc.loop = true;
+
+    this.breathFilter = this.ctx.createBiquadFilter();
+    this.breathFilter.type = 'lowpass';
+    this.breathFilter.frequency.value = 2400;
+    this.breathFilter.Q.value = 0.7;
+
+    this.breathGain = this.ctx.createGain();
+    this.breathGain.gain.value = 0;
+
+    this.breathSrc.connect(this.breathFilter);
+    this.breathFilter.connect(this.breathGain);
+    this.breathGain.connect(this.master);
+    this.breathSrc.start();
   }
 
   get ready() { return !!this.ctx; }
@@ -303,6 +396,7 @@ export class SpatialAudio {
     aggression,                         // 0..1 ghost aggression
     tension,                            // 0..1 overall tension
     isMoving,                           // Player B moving?
+    isSprinting,                        // Rain (Player B) sprinting?
     dt,
   }) {
     if (!this.ctx) return;
@@ -323,13 +417,14 @@ export class SpatialAudio {
     const t = this.ctx.currentTime;
     this._setSource(this.beaconPanner, beaconX, beaconY);
     const beaconActive = beaconDist < 90;
-    const beaconLoud = 0.5 * loudnessAt(beaconDist, this.cal);
+    const beaconLoud = this.beaconLoudMax * loudnessAt(beaconDist, this.cal);
     this.beaconGain.gain.linearRampToValueAtTime(beaconActive ? beaconLoud : 0, t + 0.1);
     if (beaconActive) {
       // Closer -> higher pitch (urgency)
       const beaconNorm = Math.max(0, Math.min(1, 1 - beaconDist / 32));
       const freq = this.beaconFreqMin + beaconNorm * (this.beaconFreqMax - this.beaconFreqMin);
       this.beaconOsc.frequency.linearRampToValueAtTime(freq, t + 0.18);
+      this.beaconSub.frequency.linearRampToValueAtTime(freq / 2, t + 0.18);
     }
 
     // ---- Ghost: spatial hum; distance via panner, aggression via gain ----
@@ -353,9 +448,16 @@ export class SpatialAudio {
       this.heartbeatTimer = this.heartbeatPeriod;
     }
 
+    // ---- Rain's sprint breathing (A hears B's lungs work) ----
+    // Cross-fades the CC0 fast-breath loop in while the sprint key is held
+    // with movement. Long ramps (0.4s) so breaths swell rather than click.
+    if (this.breathGain) {
+      const breathTarget = (isSprinting && isMoving) ? 0.55 : 0;
+      this.breathGain.gain.linearRampToValueAtTime(breathTarget, t + 0.4);
+    }
+
     // ---- Footstep (A hears B walking) ----
-    if (isMoving) {
-      this.stepTimer -= dt;
+    if (isMoving) {      this.stepTimer -= dt;
       if (this.stepTimer <= 0) {
         this._playFootstep(tension);
         this.stepTimer = 0.45;
@@ -388,6 +490,7 @@ export class SpatialAudio {
     if (d && d.active) {
       this._setSource(this.decoyPanner, d.x, d.y);
       this.decoyOsc.frequency.setValueAtTime(d.freq, t);
+      this.decoySub.frequency.setValueAtTime(d.freq / 2, t);
       this.decoyDirt.frequency.setValueAtTime(d.freq * 1.008, t);
       const dist = Math.hypot(d.x - this._lx, d.y - this._lz);
       this.decoyGain.gain.linearRampToValueAtTime(0.40 * loudnessAt(dist, this.cal), t + 0.12);
@@ -579,6 +682,23 @@ export class SpatialAudio {
 
   _playFootstep(intensity) {
     const t = this.ctx.currentTime;
+
+    // Preferred path: CC0 concrete-step sample (js/audioAssets.js),
+    // playbackRate-varied ±8% so consecutive steps don't repeat verbatim.
+    const buf = this.bank?.get('footstep');
+    if (buf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = 0.92 + Math.random() * 0.16;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.45 + intensity * 0.2;
+      const atmos = this._atmosFilter();
+      src.connect(g); g.connect(atmos); atmos.connect(this.master);
+      src.start(t);
+      return;
+    }
+
+    // Fallback: original synth pluck (asset failed to load)
     const o = this.ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(90 + Math.random() * 20, t);
